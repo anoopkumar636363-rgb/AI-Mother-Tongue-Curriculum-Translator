@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 from backend.db import init_db, record_event, set_event_context, get_event_context
@@ -1042,6 +1042,55 @@ def save_pdf_bytes(doc) -> bytes:
     output = BytesIO()
     doc.save(output, garbage=4, deflate=True)
     return output.getvalue()
+
+
+class PdfExportRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=200000)
+    target_language: str
+    title: str = Field(default="Translated curriculum", max_length=200)
+    subject: str = Field(default="", max_length=100)
+    grade: str = Field(default="", max_length=50)
+    reviewed: bool = False
+
+
+def build_text_pdf(payload: PdfExportRequest) -> bytes:
+    archive, font_css = get_font_resources(payload.target_language)
+    meta = [payload.target_language]
+    if payload.subject.strip():
+        meta.append(payload.subject.strip())
+    if payload.grade.strip():
+        meta.append(payload.grade.strip())
+    if payload.reviewed:
+        meta.append("Reviewed by teacher")
+    paragraphs = re.split(r"\n\s*\n", payload.text.strip())
+    body = "".join(
+        "<p>" + block_html(p.strip()) + "</p>" for p in paragraphs if p.strip()
+    )
+    html = (
+        "<h1>" + html_escape(payload.title.strip() or "Translated curriculum") + "</h1>"
+        "<div class='meta'>" + html_escape(" • ".join(meta)) + "</div>"
+        + body
+    )
+    base_css = (
+        "body { font-size: 12pt; line-height: 1.55; }\n"
+        "h1 { font-size: 18pt; margin: 0 0 4pt 0; }\n"
+        ".meta { font-size: 9pt; color: #666666; margin-bottom: 14pt; }\n"
+        "p { margin: 0 0 8pt 0; }\n"
+    )
+    css = font_css + "\n" + base_css
+    story = pymupdf.Story(html=html, user_css=css, archive=archive)
+    buffer = BytesIO()
+    writer = pymupdf.DocumentWriter(buffer)
+    mediabox = pymupdf.paper_rect("a4")
+    where = mediabox + (50, 50, -50, -50)
+    more = True
+    while more:
+        device = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(device)
+        writer.end_page()
+    writer.close()
+    return buffer.getvalue()
 
 
 @app.post("/api/translate-pdf")
