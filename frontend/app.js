@@ -924,7 +924,7 @@ async function loadGlossary() {
     glossaryEmpty.classList.toggle("hidden", items.length !== 0);
     items.forEach(item => {
       const tr = document.createElement("tr");
-      [item.source_term, item.target_language, item.translated_term, item.subject || "—", item.notes || "—"].forEach(value => {
+      [item.source_term, item.target_language, item.translated_term, item.subject || "—"].forEach(value => {
         const td = document.createElement("td");
         td.textContent = value;
         tr.appendChild(td);
@@ -962,7 +962,6 @@ function resetGlossaryForm() {
   glossarySource.value = "";
   glossaryTranslated.value = "";
   glossarySubjectInput.value = "";
-  glossaryNotes.value = "";
   glossaryFormTitle.textContent = "Add term";
   glossarySaveBtn.textContent = "Save term →";
   glossaryCancelBtn.classList.add("hidden");
@@ -974,7 +973,6 @@ function startGlossaryEdit(item) {
   glossaryTargetLanguage.value = item.target_language;
   glossaryTranslated.value = item.translated_term;
   glossarySubjectInput.value = item.subject || "";
-  glossaryNotes.value = item.notes || "";
   glossaryFormTitle.textContent = "Edit term";
   glossarySaveBtn.textContent = "Save changes →";
   glossaryCancelBtn.classList.remove("hidden");
@@ -1002,7 +1000,6 @@ glossaryForm.addEventListener("submit", async event => {
       target_language: glossaryTargetLanguage.value,
       translated_term: glossaryTranslated.value.trim(),
       subject: glossarySubjectInput.value.trim(),
-      notes: glossaryNotes.value.trim()
     };
     const id = glossaryEditId.value;
     const data = id
