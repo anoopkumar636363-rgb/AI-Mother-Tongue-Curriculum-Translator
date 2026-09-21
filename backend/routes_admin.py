@@ -10,12 +10,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from backend.db import get_connection, table_exists
-from backend.main import ALLOWED_LANGUAGES
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 SOURCE_TYPES = {"text", "pdf", "pdf-layout", "image"}
-LANGUAGES = set(ALLOWED_LANGUAGES)
+LANGUAGES = {"Kannada", "Hindi", "Telugu", "Tamil", "Marathi", "Malayalam", "Bengali", "Gujarati", "Punjabi", "English"}
 FAILURE_DELAY_SECONDS = 0.6
 
 
