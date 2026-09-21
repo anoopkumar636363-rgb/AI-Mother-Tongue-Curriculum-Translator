@@ -3,6 +3,7 @@ const language = document.getElementById("language");
 const translateBtn = document.getElementById("translateBtn");
 const output = document.getElementById("output");
 const copyBtn = document.getElementById("copyBtn");
+const downloadBtn = document.getElementById("downloadBtn");
 const charCount = document.getElementById("charCount");
 const pdfInput = document.getElementById("pdfInput");
 const imageInput = document.getElementById("imageInput");
@@ -31,6 +32,7 @@ function setOutput(text) {
   output.classList.remove("empty");
   output.textContent = text;
   copyBtn.disabled = !text;
+  downloadBtn.disabled = !text;
 }
 
 // Animate the completed backend response without changing its formatting.
@@ -65,6 +67,7 @@ clearBtn.addEventListener("click", () => {
   output.className = "output empty";
   output.innerHTML = '<div class="empty-icon">文</div><h3>Your translation appears here</h3><p>Choose a language and press Translate.</p>';
   copyBtn.disabled = true;
+  downloadBtn.disabled = true;
   fileStatus.classList.add("hidden");
   notice.classList.add("hidden");
   pdfInput.value = "";
@@ -146,6 +149,7 @@ translateBtn.addEventListener("click", async () => {
   output.className = "output";
   output.textContent = "AI is translating...";
   copyBtn.disabled = true;
+  downloadBtn.disabled = true;
 
   const form = new FormData();
   form.append("text", text);
@@ -167,6 +171,7 @@ translateBtn.addEventListener("click", async () => {
     await animateTyping(data.text, output);
 
     copyBtn.disabled = false;
+    downloadBtn.disabled = false;
     showNotice(`Translation complete • ${language.value}`);
   } catch (err) {
     output.className = "output empty";
@@ -178,6 +183,25 @@ translateBtn.addEventListener("click", async () => {
     if (labelSpan) labelSpan.textContent = originalLabel;
     else translateBtn.textContent = originalLabel;
   }
+});
+
+downloadBtn.addEventListener("click", () => {
+  const text = output.textContent.trim();
+  if (!text || output.classList.contains("empty")) return;
+
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const safeLanguage = language.value.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+  link.href = url;
+  link.download = `curriculum-${safeLanguage}-translation.txt`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+
+  showNotice("Translation downloaded.");
 });
 
 copyBtn.addEventListener("click", async () => {
