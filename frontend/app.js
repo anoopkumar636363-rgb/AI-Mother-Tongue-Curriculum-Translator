@@ -133,6 +133,7 @@ clearBtn.addEventListener("click", () => {
   output.innerHTML = '<div class="empty-icon">文</div><h3>Your translation appears here</h3><p>Choose a language and press Translate.</p>';
   copyBtn.disabled = true;
   downloadBtn.disabled = true;
+  downloadPdfBtn.disabled = true;
   fileStatus.classList.add("hidden");
   notice.classList.add("hidden");
   setLoading(false);
@@ -331,6 +332,7 @@ translateBtn.addEventListener("click", async () => {
   output.textContent = "AI is translating...";
   copyBtn.disabled = true;
   downloadBtn.disabled = true;
+  downloadPdfBtn.disabled = true;
 
   const form = new FormData();
   form.append("text", text);
@@ -370,6 +372,7 @@ translateBtn.addEventListener("click", async () => {
     showNotice(message, glossaryMissing.length > 0);
     copyBtn.disabled = false;
     downloadBtn.disabled = false;
+  downloadPdfBtn.disabled = false;
     saveBtn.disabled = false;
     savedResultId = null;
     saveTitle.value = text.slice(0, 60).trim() || "Untitled teaching material";
@@ -879,6 +882,7 @@ libraryLoadBtn.addEventListener("click", () => {
   output.textContent = libraryItem.translated_text;
   copyBtn.disabled = false;
   downloadBtn.disabled = false;
+  downloadPdfBtn.disabled = false;
   saveBtn.disabled = false;
   syncGlossaryLanguages();
 resetGlossaryForm();
