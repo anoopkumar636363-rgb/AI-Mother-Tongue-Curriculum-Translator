@@ -15,6 +15,7 @@
     <header class="hero">
       <nav class="top-tabs" aria-label="Primary">
         <button class="tab-btn active" data-tab="translateView">Translate</button>
+        <button class="tab-btn" data-tab="libraryView">Library</button>
         <button class="tab-btn" data-tab="dashboardView">Dashboard</button>
       </nav>
       <div class="badge">✦ AI EDUCATION PROTOTYPE</div>
@@ -66,6 +67,7 @@
               <p>AI-generated translation for review.</p>
             </div>
             <div class="output-actions">
+              <button id="saveBtn" class="ghost-btn" disabled>Save to Library</button>
               <button id="downloadBtn" class="ghost-btn" disabled>Download</button>
               <button id="copyBtn" class="ghost-btn" disabled>Copy</button>
             </div>
@@ -104,6 +106,10 @@
           <label for="grade">Grade <span>(optional)</span></label>
           <input id="grade" type="text" placeholder="e.g. Grade 10" maxlength="50" />
         </div>
+        <div class="field small-field save-title-field">
+          <label for="saveTitle">Library title <span>(used when saving)</span></label>
+          <input id="saveTitle" type="text" maxlength="200" placeholder="Auto-filled after translation" />
+        </div>
 
         <button id="translateBtn" class="translate-btn">
           <span>Translate with AI</span>
@@ -124,7 +130,65 @@
       <div id="notice" class="notice hidden"></div>
     </section>
 
-    <section id="dashboardView" class="view dashboard-view card hidden">
+        <section id="libraryView" class="view library-view card hidden">
+      <div class="library-head">
+        <div>
+          <div class="badge">✦ TEACHING MATERIALS</div>
+          <h2>Saved Library</h2>
+          <p>Reuse translated curriculum whenever you need it.</p>
+        </div>
+      </div>
+
+      <div id="libraryError" class="library-error hidden"></div>
+
+      <div id="libraryListView">
+        <div class="library-toolbar">
+          <input id="librarySearch" type="search" maxlength="200" placeholder="Search title, subject, or translated text..." />
+          <select id="libraryLanguage"><option value="">All languages</option></select>
+          <select id="librarySubject"><option value="">All subjects</option></select>
+          <select id="libraryGrade"><option value="">All grades</option></select>
+          <button id="librarySearchBtn" class="ghost-btn">Search</button>
+        </div>
+
+        <div id="libraryItems" class="library-items"></div>
+        <div id="libraryEmpty" class="empty-dashboard hidden">No saved materials yet</div>
+
+        <div class="pager">
+          <button id="libraryPrev" class="ghost-btn">← Previous</button>
+          <span id="libraryPageLabel">Page 1</span>
+          <button id="libraryNext" class="ghost-btn">Next →</button>
+        </div>
+      </div>
+
+      <div id="libraryDetailView" class="library-detail hidden">
+        <div class="library-detail-head">
+          <button id="libraryBackBtn" class="ghost-btn">← Back to Library</button>
+          <div class="library-detail-actions">
+            <button id="librarySaveBtn" class="translate-btn">Save changes →</button>
+            <button id="libraryCopyBtn" class="ghost-btn">Copy</button>
+            <button id="libraryDownloadBtn" class="ghost-btn">Download .txt</button>
+            <button id="libraryDeleteBtn" class="ghost-btn danger-btn">Delete</button>
+            <button id="libraryLoadBtn" class="ghost-btn">Load into Translate tab</button>
+          </div>
+        </div>
+        <div class="library-detail-meta">
+          <input id="libraryDetailTitle" type="text" maxlength="200" aria-label="Material title" />
+          <div id="libraryDetailInfo"></div>
+        </div>
+        <div class="library-detail-grid">
+          <div class="library-text-panel">
+            <h3>Original</h3>
+            <pre id="libraryOriginalText"></pre>
+          </div>
+          <div class="library-text-panel">
+            <h3>Translated — editable</h3>
+            <textarea id="libraryTranslatedText"></textarea>
+          </div>
+        </div>
+      </div>
+    </section>
+
+<section id="dashboardView" class="view dashboard-view card hidden">
       <div class="dashboard-head">
         <div>
           <div class="badge">✦ TEACHER / ADMIN</div>
