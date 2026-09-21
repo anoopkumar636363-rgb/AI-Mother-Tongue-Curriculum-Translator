@@ -16,9 +16,10 @@ from pypdf import PdfReader
 import pymupdf
 from pydantic import BaseModel
 
-load_dotenv()
+load_dotenv(override=True)
 
-API_KEY = os.getenv("GEMINI_API_KEY")
+# Read the key from .env even if an older GEMINI_API_KEY exists in the shell.
+API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
 
 # The app tries these models in order. If one is unavailable or temporarily
 # rate-limited, it automatically tries the next one.
