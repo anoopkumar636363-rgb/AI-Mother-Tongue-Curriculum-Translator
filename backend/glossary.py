@@ -9,7 +9,7 @@ def _is_latin_script(term: str) -> bool:
     return bool(letters) and all(("A" <= char <= "Z") or ("a" <= char <= "z") for char in letters)
 
 
-def _term_matches(text: str, term: str) -> bool:
+def term_matches(text: str, term: str) -> bool:
     if _is_latin_script(term):
         return re.search(r"(?<![A-Za-z0-9_])" + re.escape(term) + r"(?![A-Za-z0-9_])", text, re.IGNORECASE) is not None
     return term.casefold() in text.casefold()
@@ -44,7 +44,7 @@ def get_relevant_terms(text: str, target_language: str, subject: str, limit: int
         if previous is None or (is_specific and not previous["subject"]):
             selected[key] = item
 
-    matches = [item for item in selected.values() if _term_matches(text, item["source_term"])]
+    matches = [item for item in selected.values() if term_matches(text, item["source_term"])]
     matches.sort(
         key=lambda item: (
             -len(item["source_term"]),
