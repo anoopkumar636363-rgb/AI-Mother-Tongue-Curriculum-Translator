@@ -1,0 +1,203 @@
+import os
+from io import BytesIO
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from google import genai
+from google.genai import types
+from pypdf import PdfReader
+
+load_dotenv()
+
+API_KEY = os.getenv("GEMINI_API_KEY")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MAX_CHARS = 30000
+ALLOWED_LANGUAGES = {
+    "Kannada": "kn",
+    "Hindi": "hi",
+    "Telugu": "te",
+    "Tamil": "ta",
+    "Marathi": "mr",
+    "Malayalam": "ml",
+    "Bengali": "bn",
+    "Gujarati": "gu",
+    "Punjabi": "pa",
+    "English": "en",
+}
+
+app = FastAPI(
+    title="AI Mother Tongue Curriculum Translator",
+    version="1.0.0",
+)
+
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
+
+def get_client() -> genai.Client:
+    if not API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="GEMINI_API_KEY is missing. Add it to your .env file.",
+        )
+    return genai.Client(api_key=API_KEY)
+
+
+def build_translation_prompt(text: str, target_language: str) -> str:
+    return f"""
+You are an educational curriculum translator.
+
+Translate the curriculum below from its original language into {target_language}.
+
+Rules:
+1. Preserve the original meaning and educational intent.
+2. Preserve headings, numbered lists, bullet points, examples, formulas, units, symbols, and paragraph structure.
+3. Use natural language appropriate for a student, not awkward word-for-word translation.
+4. Keep internationally standard scientific, mathematical, programming, and technical terms when translating them would reduce clarity.
+5. Do not add facts that are not present in the source.
+6. Do not summarize or shorten the content.
+7. Return ONLY the translated curriculum. Do not add commentary.
+
+CURRICULUM:
+{text}
+""".strip()
+
+
+@app.get("/")
+async def home():
+    return FileResponse("frontend/index.html")
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "model": MODEL}
+
+
+@app.post("/api/translate")
+async def translate_text(
+    text: str = Form(...),
+    target_language: str = Form(...),
+):
+    text = text.strip()
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Please enter some curriculum text.")
+
+    if target_language not in ALLOWED_LANGUAGES:
+        raise HTTPException(status_code=400, detail="Unsupported target language.")
+
+    if len(text) > MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Text is too long for the prototype. Keep it under {MAX_CHARS:,} characters.",
+        )
+
+    client = get_client()
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=build_translation_prompt(text, target_language),
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+            ),
+        )
+        translated = (response.text or "").strip()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI translation failed: {exc}") from exc
+
+    if not translated:
+        raise HTTPException(status_code=502, detail="The AI returned an empty translation.")
+
+    return {
+        "source_text": text,
+        "translated_text": translated,
+        "target_language": target_language,
+        "model": MODEL,
+    }
+
+
+@app.post("/api/extract-pdf")
+async def extract_pdf(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Please upload a PDF file.")
+
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="PDF is too large. Keep it under 15 MB.")
+
+    try:
+        reader = PdfReader(BytesIO(data))
+        pages = []
+        for page in reader.pages:
+            pages.append(page.extract_text() or "")
+
+        text = "\n\n".join(pages).strip()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not read this PDF: {exc}") from exc
+
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail="No selectable text was found. This may be a scanned PDF. For this prototype, upload a clear page image instead.",
+        )
+
+    if len(text) > MAX_CHARS:
+        text = text[:MAX_CHARS]
+        truncated = True
+    else:
+        truncated = False
+
+    return {
+        "filename": file.filename,
+        "text": text,
+        "truncated": truncated,
+        "characters": len(text),
+    }
+
+
+@app.post("/api/extract-image")
+async def extract_image(file: UploadFile = File(...)):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Please upload a JPG, PNG, WEBP, or other image.")
+
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image is too large. Keep it under 10 MB.")
+
+    client = get_client()
+
+    prompt = """
+Read the educational textbook/curriculum page in this image.
+
+Extract all readable text in the correct order. Preserve headings, bullets,
+numbering, formulas, examples, and paragraphs. Do not translate it.
+Return only the extracted text. If something is unreadable, write [unclear]
+instead of inventing content.
+""".strip()
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=[
+                types.Part.from_bytes(data=data, mime_type=file.content_type),
+                prompt,
+            ],
+            config=types.GenerateContentConfig(temperature=0),
+        )
+        text = (response.text or "").strip()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Image OCR failed: {exc}") from exc
+
+    if not text:
+        raise HTTPException(status_code=422, detail="No readable text was found in the image.")
+
+    if len(text) > MAX_CHARS:
+        text = text[:MAX_CHARS]
+
+    return {
+        "filename": file.filename,
+        "text": text,
+        "characters": len(text),
+    }
