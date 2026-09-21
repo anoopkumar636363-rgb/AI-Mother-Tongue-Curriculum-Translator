@@ -34,23 +34,27 @@ function setOutput(text) {
 }
 
 // Animate the completed backend response without changing its formatting.
-function animateTyping(fullText, element, delay = 8) {
+function animateTyping(fullText, element) {
   return new Promise((resolve) => {
     element.className = "output";
     element.textContent = "";
 
     let index = 0;
+    const charsPerFrame = 12;
 
-    const interval = setInterval(() => {
-      if (index < fullText.length) {
-        element.textContent += fullText[index];
-        element.scrollTop = element.scrollHeight;
-        index++;
-      } else {
-        clearInterval(interval);
+    function reveal() {
+      if (index >= fullText.length) {
         resolve();
+        return;
       }
-    }, delay);
+
+      element.textContent += fullText.slice(index, index + charsPerFrame);
+      index += charsPerFrame;
+      element.scrollTop = element.scrollHeight;
+      requestAnimationFrame(reveal);
+    }
+
+    requestAnimationFrame(reveal);
   });
 }
 
@@ -150,35 +154,17 @@ translateBtn.addEventListener("click", async () => {
   try {
     const res = await fetch("/api/translate", { method: "POST", body: form });
 
+    const data = await res.json().catch(() => ({}));
+
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
       throw new Error(data.detail || "Translation failed.");
     }
 
-    if (!res.body) {
-      throw new Error("Streaming is not supported by this browser.");
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let translatedText = "";
-
-    output.textContent = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      translatedText += decoder.decode(value, { stream: true });
-      output.textContent = translatedText;
-      output.scrollTop = output.scrollHeight;
-    }
-
-    translatedText += decoder.decode();
-
-    if (!translatedText.trim()) {
+    if (!data.text) {
       throw new Error("The AI returned an empty translation.");
     }
+
+    await animateTyping(data.text, output);
 
     copyBtn.disabled = false;
     showNotice(`Translation complete • ${language.value}`);
