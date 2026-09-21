@@ -1093,6 +1093,24 @@ def build_text_pdf(payload: PdfExportRequest) -> bytes:
     return buffer.getvalue()
 
 
+@app.post("/api/export-pdf")
+async def export_pdf(payload: PdfExportRequest):
+    validate_target_language(payload.target_language)
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="There is no translated text to export.")
+    try:
+        pdf_bytes = await asyncio.to_thread(build_text_pdf, payload)
+    except Exception as exc:
+        logger.exception("Could not build PDF export")
+        raise HTTPException(status_code=500, detail=f"Could not create the PDF: {exc}") from exc
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", payload.title).strip("-") or "translation"
+    lang = re.sub(r"[^A-Za-z0-9]+", "-", payload.target_language.lower()).strip("-")
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{base}-{lang}.pdf"'},
+    )
+
 @app.post("/api/translate-pdf")
 @log_event("pdf-layout")
 async def translate_pdf(
