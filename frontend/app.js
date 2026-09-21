@@ -957,12 +957,17 @@ function setGlossaryError(message) {
   el.classList.toggle("hidden", !message);
 }
 
+function languageLabel(value) {
+  const opt = [...language.options].find(o => o.value === value);
+  return opt ? opt.textContent : value;
+}
+
 function renderGlossaryRows(items) {
   glossaryBody.replaceChildren();
   glossaryEmpty.classList.toggle("hidden", items.length !== 0);
   items.forEach(item => {
     const tr = document.createElement("tr");
-    [item.source_term, item.target_language, item.translated_term, item.subject || "—"].forEach(value => {
+    [item.source_term, languageLabel(item.target_language), item.translated_term, item.subject || "—"].forEach(value => {
       const td = document.createElement("td");
       td.textContent = value;
       tr.appendChild(td);
