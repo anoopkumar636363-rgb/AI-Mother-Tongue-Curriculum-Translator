@@ -4,7 +4,6 @@ const translateBtn = document.getElementById("translateBtn");
 const output = document.getElementById("output");
 const copyBtn = document.getElementById("copyBtn");
 const downloadBtn = document.getElementById("downloadBtn");
-const downloadBtn = document.getElementById("downloadBtn");
 const charCount = document.getElementById("charCount");
 const pdfInput = document.getElementById("pdfInput");
 const imageInput = document.getElementById("imageInput");
@@ -33,7 +32,6 @@ function setOutput(text) {
   output.classList.remove("empty");
   output.textContent = text;
   copyBtn.disabled = !text;
-  downloadBtn.disabled = !text;
   downloadBtn.disabled = !text;
 }
 
@@ -187,6 +185,7 @@ translateBtn.addEventListener("click", async () => {
   }
 });
 
+
 downloadBtn.addEventListener("click", () => {
   const text = output.textContent.trim();
   if (!text || output.classList.contains("empty")) return;
@@ -204,26 +203,6 @@ downloadBtn.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 
   showNotice("Translation downloaded.");
-});
-
-
-downloadBtn.addEventListener("click", () => {
-  const text = output.textContent.trim();
-  if (!text) return;
-
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const filename = `curriculum-${language.value.toLowerCase().replace(/\\s+/g, "-")}.txt`;
-
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-
-  showNotice(`Downloaded • ${filename}`);
 });
 
 copyBtn.addEventListener("click", async () => {
