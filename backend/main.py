@@ -75,18 +75,7 @@ LAYOUT_MODEL_RETRIES = max(1, int(os.getenv("LAYOUT_MODEL_RETRIES", "2")))
 LAYOUT_REQUEUE_LIMIT = max(1, int(os.getenv("LAYOUT_REQUEUE_LIMIT", "2")))
 LAYOUT_REQUEST_TIMEOUT = max(30, int(os.getenv("LAYOUT_REQUEST_TIMEOUT", "120")))
 
-ALLOWED_LANGUAGES = {
-    "Kannada": "kn",
-    "Hindi": "hi",
-    "Telugu": "te",
-    "Tamil": "ta",
-    "Marathi": "mr",
-    "Malayalam": "ml",
-    "Bengali": "bn",
-    "Gujarati": "gu",
-    "Punjabi": "pa",
-    "English": "en",
-}
+from backend.config import ALLOWED_LANGUAGES
 
 BASE_DIR = Path(__file__).resolve().parent
 FONT_DIR = BASE_DIR / "fonts"
