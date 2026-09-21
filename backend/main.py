@@ -58,7 +58,7 @@ MAX_LAYOUT_PDF_MB = 200
 # small text batches are sent to Gemini. Each batch uses the SAME fallback
 # chain, so models are failover choices rather than fixed assignments.
 LAYOUT_WORKERS = max(1, int(os.getenv("LAYOUT_WORKERS", "4")))
-LAYOUT_BATCH_CHARS = max(4000, int(os.getenv("LAYOUT_BATCH_CHARS", "12000")))
+LAYOUT_BATCH_CHARS = max(3000, int(os.getenv("LAYOUT_BATCH_CHARS", "8000")))
 LAYOUT_MODEL_RETRIES = max(1, int(os.getenv("LAYOUT_MODEL_RETRIES", "2")))
 LAYOUT_REQUEUE_LIMIT = max(1, int(os.getenv("LAYOUT_REQUEUE_LIMIT", "2")))
 LAYOUT_REQUEST_TIMEOUT = max(30, int(os.getenv("LAYOUT_REQUEST_TIMEOUT", "120")))
@@ -541,11 +541,14 @@ async def translate_batch_with_fallback(client, batch, target_language: str):
             else "low"
         )
         config = types.GenerateContentConfig(
+            # Translation does not need deep reasoning; keep latency low.
             thinking_config=types.ThinkingConfig(
                 thinking_level=thinking_level
             ),
             response_mime_type="application/json",
             response_schema=TranslatedBlocks,
+            # Leave enough room for languages that expand the source text.
+            max_output_tokens=20000,
         )
 
         for attempt in range(LAYOUT_MODEL_RETRIES):
@@ -627,13 +630,14 @@ async def translate_layout_blocks(client: genai.Client, blocks, target_language:
                     pending.append((batch_index, batch))
                     continue
 
+                error_detail = str(result)
                 raise HTTPException(
                     status_code=502,
                     detail=(
                         f"Translation brain could not complete batch "
                         f"{batch_index + 1}/{total_batches} after "
                         f"{LAYOUT_REQUEUE_LIMIT} requeues. "
-                        f"The remaining PDF was not modified."
+                        f"Reason: {error_detail[-1800:]}"
                     ),
                 )
 
