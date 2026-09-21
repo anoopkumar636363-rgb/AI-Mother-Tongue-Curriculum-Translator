@@ -291,6 +291,7 @@ translateBtn.addEventListener("click", async () => {
   form.append("target_language", language.value);
   form.append("subject", subject.value.trim());
   form.append("grade", grade.value.trim());
+  form.append("use_glossary", useGlossary.checked ? "true" : "false");
 
   try {
     const res = await fetch("/api/translate", { method: "POST", body: form });
