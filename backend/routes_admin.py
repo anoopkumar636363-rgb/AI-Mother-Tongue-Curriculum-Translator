@@ -156,6 +156,21 @@ async def admin_stats(
                     f"SELECT COUNT(*) FROM {table}"
                 ).fetchone()[0]
 
+        glossary_by_language = []
+        if table_exists(conn, "glossary_terms"):
+            glossary_by_language = [
+                {"label": row["label"], "count": row["count"]}
+                for row in conn.execute(
+                    """
+                    SELECT COALESCE(NULLIF(TRIM(target_language), ''), 'Unspecified') AS label,
+                           COUNT(*) AS count
+                    FROM glossary_terms
+                    GROUP BY label
+                    ORDER BY count DESC, label ASC
+                    """
+                ).fetchall()
+            ]
+
         total = summary["total"]
         successes = summary["successes"]
 
@@ -174,6 +189,7 @@ async def admin_stats(
             "by_model": _group_counts(conn, "model", start),
             "daily": _daily_series(conn, start, end),
             "recent_events": [dict(row) for row in recent],
+            "glossary_by_language": glossary_by_language,
             **library_counts,
         }
 
