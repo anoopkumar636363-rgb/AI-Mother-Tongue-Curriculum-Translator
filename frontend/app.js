@@ -30,6 +30,24 @@ async function downloadPdf({ text, targetLanguage, title, subject, grade, review
 }
 
 
+libraryDownloadPdfBtn.addEventListener("click", async () => {
+  if (!libraryItem) return;
+
+  try {
+    await downloadPdf({
+      text: libraryTranslatedText.value,
+      targetLanguage: libraryItem.target_language,
+      title: libraryDetailTitle.value.trim() || "Translated curriculum",
+      subject: libraryItem.subject || "",
+      grade: libraryItem.grade || "",
+      reviewed: false,
+    });
+    showNotice("PDF downloaded.");
+  } catch (err) {
+    setLibraryError(err.message);
+  }
+});
+
 downloadPdfBtn.addEventListener("click", async () => {
   const text = output.textContent.trim();
   if (!text || output.classList.contains("empty")) return;
@@ -468,6 +486,7 @@ const libraryTranslatedText = document.getElementById("libraryTranslatedText");
 const librarySaveBtn = document.getElementById("librarySaveBtn");
 const libraryCopyBtn = document.getElementById("libraryCopyBtn");
 const libraryDownloadBtn = document.getElementById("libraryDownloadBtn");
+const libraryDownloadPdfBtn = document.getElementById("libraryDownloadPdfBtn");
 const libraryDeleteBtn = document.getElementById("libraryDeleteBtn");
 const libraryLoadBtn = document.getElementById("libraryLoadBtn");
 
