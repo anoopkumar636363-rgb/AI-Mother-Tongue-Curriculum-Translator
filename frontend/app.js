@@ -8,6 +8,8 @@ const charCount = document.getElementById("charCount");
 const pdfInput = document.getElementById("pdfInput");
 const imageInput = document.getElementById("imageInput");
 const clearBtn = document.getElementById("clearBtn");
+const translatePdfBtn = document.getElementById("translatePdfBtn");
+let selectedPdfFile = null;
 const fileStatus = document.getElementById("fileStatus");
 const notice = document.getElementById("notice");
 const health = document.getElementById("health");
@@ -72,6 +74,8 @@ clearBtn.addEventListener("click", () => {
   notice.classList.add("hidden");
   pdfInput.value = "";
   imageInput.value = "";
+  selectedPdfFile = null;
+  translatePdfBtn.disabled = true;
   updateCount();
 });
 
@@ -79,6 +83,8 @@ pdfInput.addEventListener("change", async () => {
   const file = pdfInput.files[0];
   if (!file) return;
 
+  selectedPdfFile = file;
+  translatePdfBtn.disabled = false;
   showFileStatus("Reading PDF...");
   const form = new FormData();
   form.append("file", file);
@@ -102,10 +108,63 @@ pdfInput.addEventListener("change", async () => {
   }
 });
 
+
+translatePdfBtn.addEventListener("click", async () => {
+  if (!selectedPdfFile) {
+    showNotice("Upload a PDF first.", true);
+    return;
+  }
+
+  translatePdfBtn.disabled = true;
+  const originalLabel = translatePdfBtn.textContent;
+  translatePdfBtn.textContent = "Building PDF...";
+  showNotice("Translating PDF into " + language.value + " while preserving its layout...");
+
+  const form = new FormData();
+  form.append("file", selectedPdfFile);
+  form.append("target_language", language.value);
+
+  try {
+    const res = await fetch("/api/translate-pdf", {
+      method: "POST",
+      body: form,
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || "Could not translate the PDF.");
+    }
+
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/i);
+    const filename = match ? match[1] : "translated-curriculum.pdf";
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+
+    showNotice("Translated PDF downloaded • " + language.value + " • original layout preserved");
+  } catch (err) {
+    showNotice(err.message, true);
+  } finally {
+    translatePdfBtn.disabled = !selectedPdfFile;
+    translatePdfBtn.textContent = originalLabel;
+  }
+});
+
+
 imageInput.addEventListener("change", async () => {
   const file = imageInput.files[0];
   if (!file) return;
 
+  selectedPdfFile = null;
+  translatePdfBtn.disabled = true;
   showFileStatus("AI is reading the page...");
   const form = new FormData();
   form.append("file", file);
