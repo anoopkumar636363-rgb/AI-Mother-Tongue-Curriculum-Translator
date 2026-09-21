@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
@@ -76,11 +75,6 @@ def _now():
 
 def _row(row):
     return dict(row) if row else None
-
-
-def _validate_filter(value: str, max_length: int, name: str):
-    if len(value) > max_length:
-        raise HTTPException(status_code=400, detail=f"{name} is too long.")
 
 
 @router.post("")
