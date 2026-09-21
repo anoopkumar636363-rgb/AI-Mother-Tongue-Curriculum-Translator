@@ -309,9 +309,7 @@ translateBtn.addEventListener("click", async () => {
     downloadBtn.disabled = false;
     saveBtn.disabled = false;
     savedResultId = null;
-    if (!saveTitle.value.trim()) {
-      saveTitle.value = text.slice(0, 60).trim() || "Untitled teaching material";
-    }
+    saveTitle.value = text.slice(0, 60).trim() || "Untitled teaching material";
     showNotice(`Translation complete • ${language.value}`);
   } catch (err) {
     setLoading(false);
