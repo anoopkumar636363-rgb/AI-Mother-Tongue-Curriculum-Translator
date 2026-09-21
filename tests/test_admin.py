@@ -75,6 +75,34 @@ def test_admin_stats_aggregates_sample_events(client, monkeypatch, tmp_path):
             """,
             rows,
         )
+        conn.execute(
+            """
+            CREATE TABLE translations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                subject TEXT,
+                grade TEXT,
+                target_language TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                original_text TEXT NOT NULL,
+                translated_text TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO translations
+            (title, subject, grade, target_language, source_type,
+             original_text, translated_text, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "Saved lesson", "Science", "10", "Kannada", "text",
+                "Original", "Translated", now, now,
+            ),
+        )
         conn.commit()
 
     response = client.get(
@@ -97,6 +125,7 @@ def test_admin_stats_aggregates_sample_events(client, monkeypatch, tmp_path):
     assert {"label": "model-a", "count": 2} in data["by_model"]
     assert len(data["daily"]) == 7
     assert len(data["recent_events"]) == 3
+    assert data["translations"] == 1
 
 
 def test_logging_failure_does_not_break_translate(client, monkeypatch):
