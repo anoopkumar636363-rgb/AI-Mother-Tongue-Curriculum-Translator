@@ -110,6 +110,8 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 app.include_router(admin_router)
+from backend.routes_library import router as library_router
+app.include_router(library_router)
 init_db()
 
 
