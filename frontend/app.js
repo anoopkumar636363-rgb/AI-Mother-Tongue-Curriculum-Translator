@@ -4,12 +4,16 @@ const translateBtn = document.getElementById("translateBtn");
 const output = document.getElementById("output");
 const copyBtn = document.getElementById("copyBtn");
 const downloadBtn = document.getElementById("downloadBtn");
+const saveBtn = document.getElementById("saveBtn");
+const saveTitle = document.getElementById("saveTitle");
 const charCount = document.getElementById("charCount");
 const pdfInput = document.getElementById("pdfInput");
 const imageInput = document.getElementById("imageInput");
 const clearBtn = document.getElementById("clearBtn");
 const translatePdfBtn = document.getElementById("translatePdfBtn");
 let selectedPdfFile = null;
+let currentSourceType = "text";
+let savedResultId = null;
 const fileStatus = document.getElementById("fileStatus");
 const notice = document.getElementById("notice");
 const loadingBar = document.getElementById("loadingBar");
@@ -46,6 +50,7 @@ function setOutput(text) {
   output.textContent = text;
   copyBtn.disabled = !text;
   downloadBtn.disabled = !text;
+  saveBtn.disabled = !text || savedResultId !== null;
 }
 
 // Animate the completed backend response without changing its formatting.
@@ -87,6 +92,10 @@ clearBtn.addEventListener("click", () => {
   pdfInput.value = "";
   imageInput.value = "";
   selectedPdfFile = null;
+  currentSourceType = "text";
+  savedResultId = null;
+  saveBtn.disabled = true;
+  saveTitle.value = "";
   translatePdfBtn.disabled = true;
   updateCount();
 });
@@ -96,6 +105,9 @@ pdfInput.addEventListener("change", async () => {
   if (!file) return;
 
   selectedPdfFile = file;
+  currentSourceType = "pdf";
+  savedResultId = null;
+  saveBtn.disabled = true;
   translatePdfBtn.disabled = false;
 
   // Large PDFs are intended for the layout-preserving pipeline. Avoid
@@ -212,6 +224,9 @@ imageInput.addEventListener("change", async () => {
   if (!file) return;
 
   selectedPdfFile = null;
+  currentSourceType = "image";
+  savedResultId = null;
+  saveBtn.disabled = true;
   translatePdfBtn.disabled = true;
   showFileStatus("AI is reading the page...");
   const form = new FormData();
@@ -232,8 +247,16 @@ imageInput.addEventListener("change", async () => {
   }
 });
 
+sourceText.addEventListener("input", () => {
+  currentSourceType = "text";
+  savedResultId = null;
+  if (saveBtn) saveBtn.disabled = true;
+});
+
 translateBtn.addEventListener("click", async () => {
   const text = sourceText.value.trim();
+  savedResultId = null;
+  if (saveBtn) saveBtn.disabled = true;
 
   if (!text) {
     showNotice("Add curriculum text, upload a PDF, or scan a page first.", true);
@@ -284,6 +307,11 @@ translateBtn.addEventListener("click", async () => {
     setLoading(false);
     copyBtn.disabled = false;
     downloadBtn.disabled = false;
+    saveBtn.disabled = false;
+    savedResultId = null;
+    if (!saveTitle.value.trim()) {
+      saveTitle.value = text.slice(0, 60).trim() || "Untitled teaching material";
+    }
     showNotice(`Translation complete • ${language.value}`);
   } catch (err) {
     setLoading(false);
@@ -343,10 +371,36 @@ fetch("/api/health")
 updateCount();
 
 
-// Teacher/Admin dashboard
+// Library + Teacher/Admin dashboard
 const tabs = document.querySelectorAll(".tab-btn");
 const translateView = document.getElementById("translateView");
+const libraryView = document.getElementById("libraryView");
 const dashboardView = document.getElementById("dashboardView");
+
+const libraryError = document.getElementById("libraryError");
+const libraryListView = document.getElementById("libraryListView");
+const libraryDetailView = document.getElementById("libraryDetailView");
+const libraryItems = document.getElementById("libraryItems");
+const libraryEmpty = document.getElementById("libraryEmpty");
+const librarySearch = document.getElementById("librarySearch");
+const librarySearchBtn = document.getElementById("librarySearchBtn");
+const libraryLanguage = document.getElementById("libraryLanguage");
+const librarySubject = document.getElementById("librarySubject");
+const libraryGrade = document.getElementById("libraryGrade");
+const libraryPrev = document.getElementById("libraryPrev");
+const libraryNext = document.getElementById("libraryNext");
+const libraryPageLabel = document.getElementById("libraryPageLabel");
+const libraryBackBtn = document.getElementById("libraryBackBtn");
+const libraryDetailTitle = document.getElementById("libraryDetailTitle");
+const libraryDetailInfo = document.getElementById("libraryDetailInfo");
+const libraryOriginalText = document.getElementById("libraryOriginalText");
+const libraryTranslatedText = document.getElementById("libraryTranslatedText");
+const librarySaveBtn = document.getElementById("librarySaveBtn");
+const libraryCopyBtn = document.getElementById("libraryCopyBtn");
+const libraryDownloadBtn = document.getElementById("libraryDownloadBtn");
+const libraryDeleteBtn = document.getElementById("libraryDeleteBtn");
+const libraryLoadBtn = document.getElementById("libraryLoadBtn");
+
 const adminLogin = document.getElementById("adminLogin");
 const adminPassword = document.getElementById("adminPassword");
 const loginBtn = document.getElementById("loginBtn");
@@ -367,14 +421,23 @@ const nextPage = document.getElementById("nextPage");
 const pageLabel = document.getElementById("pageLabel");
 const eventMeta = document.getElementById("eventMeta");
 const sourceBreakdown = document.getElementById("sourceBreakdown");
-let adminPasswordMemory = ""; // Session-only; never persisted to storage.
+
+let adminPasswordMemory = "";
 let adminPage = 1;
 let languageChart = null;
 let dailyChart = null;
+let libraryPage = 1;
+let libraryTotalPages = 0;
+let libraryItem = null;
 
 function setDashboardError(message) {
   dashboardError.textContent = message;
   dashboardError.classList.toggle("hidden", !message);
+}
+
+function setLibraryError(message) {
+  libraryError.textContent = message;
+  libraryError.classList.toggle("hidden", !message);
 }
 
 function adminHeaders() {
@@ -384,7 +447,13 @@ function adminHeaders() {
 function showTab(id) {
   tabs.forEach(tab => tab.classList.toggle("active", tab.dataset.tab === id));
   translateView.classList.toggle("hidden", id !== "translateView");
+  libraryView.classList.toggle("hidden", id !== "libraryView");
   dashboardView.classList.toggle("hidden", id !== "dashboardView");
+
+  if (id === "libraryView") {
+    loadLibraryFilters();
+    if (!libraryItem) loadLibrary();
+  }
   if (id === "dashboardView" && adminPasswordMemory) loadDashboard();
 }
 
@@ -404,71 +473,26 @@ function renderCharts(stats) {
     setDashboardError("Dashboard charts could not load. Please check your internet connection and refresh.");
     return;
   }
-
   destroyCharts();
-
-  const languageCanvas = document.getElementById("languageChart");
-  const dailyCanvas = document.getElementById("dailyChart");
-
-  languageChart = new Chart(languageCanvas, {
+  languageChart = new Chart(document.getElementById("languageChart"), {
     type: "bar",
     data: {
       labels: (stats.by_target_language || []).map(x => x.label),
-      datasets: [{
-        label: "Translations",
-        data: (stats.by_target_language || []).map(x => x.count),
-        borderWidth: 0,
-        borderRadius: 6
-      }]
+      datasets: [{ label: "Translations", data: (stats.by_target_language || []).map(x => x.count), borderWidth: 0, borderRadius: 6 }]
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: "y",
-      plugins: { legend: { display: false } },
-      scales: {
-        x: {
-          beginAtZero: true,
-          ticks: { color: "#7d88a3", precision: 0 },
-          grid: { color: "rgba(255,255,255,.05)" }
-        },
-        y: {
-          ticks: { color: "#c4cce0" },
-          grid: { display: false }
-        }
-      }
-    }
+    options: { responsive: true, maintainAspectRatio: false, indexAxis: "y", plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true, ticks: { color: "#7d88a3", precision: 0 }, grid: { color: "rgba(255,255,255,.05)" } },
+        y: { ticks: { color: "#c4cce0" }, grid: { display: false } } } }
   });
-
-  dailyChart = new Chart(dailyCanvas, {
+  dailyChart = new Chart(document.getElementById("dailyChart"), {
     type: "line",
     data: {
       labels: (stats.daily || []).map(x => x.date),
-      datasets: [{
-        label: "Translations",
-        data: (stats.daily || []).map(x => x.count),
-        tension: 0.25,
-        fill: false,
-        borderWidth: 2,
-        pointRadius: 2
-      }]
+      datasets: [{ label: "Translations", data: (stats.daily || []).map(x => x.count), tension: .25, fill: false, borderWidth: 2, pointRadius: 2 }]
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: {
-          ticks: { color: "#7d88a3", maxTicksLimit: 8 },
-          grid: { color: "rgba(255,255,255,.05)" }
-        },
-        y: {
-          beginAtZero: true,
-          ticks: { color: "#7d88a3", precision: 0 },
-          grid: { color: "rgba(255,255,255,.05)" }
-        }
-      }
-    }
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+      scales: { x: { ticks: { color: "#7d88a3", maxTicksLimit: 8 }, grid: { color: "rgba(255,255,255,.05)" } },
+        y: { beginAtZero: true, ticks: { color: "#7d88a3", precision: 0 }, grid: { color: "rgba(255,255,255,.05)" } } } }
   });
 }
 
@@ -480,12 +504,22 @@ function escapeHtml(value) {
 
 function renderSourceBreakdown(items) {
   if (!items.length) {
-    sourceBreakdown.innerHTML = '<div class="empty-dashboard">No translations yet</div>';
+    sourceBreakdown.textContent = "No translations yet";
+    sourceBreakdown.classList.add("empty-dashboard");
     return;
   }
-  sourceBreakdown.innerHTML = items.map(item =>
-    '<div class="source-pill"><span>' + escapeHtml(item.label) + '</span><strong>' + formatNumber(item.count) + '</strong></div>'
-  ).join("");
+  sourceBreakdown.classList.remove("empty-dashboard");
+  sourceBreakdown.replaceChildren();
+  items.forEach(item => {
+    const pill = document.createElement("div");
+    pill.className = "source-pill";
+    const label = document.createElement("span");
+    label.textContent = item.label;
+    const count = document.createElement("strong");
+    count.textContent = formatNumber(item.count);
+    pill.append(label, count);
+    sourceBreakdown.appendChild(pill);
+  });
 }
 
 async function fetchStats() {
@@ -504,6 +538,13 @@ async function loadDashboard() {
     document.getElementById("statSuccess").textContent = stats.success_rate + "%";
     document.getElementById("statChars").textContent = formatNumber(stats.total_characters);
     document.getElementById("statAvg").textContent = formatNumber(Math.round(stats.average_duration_ms)) + " ms";
+
+    const savedCard = document.getElementById("statSaved");
+    if (savedCard) {
+      savedCard.classList.toggle("hidden", stats.translations === undefined);
+      if (stats.translations !== undefined) savedCard.textContent = formatNumber(stats.translations);
+    }
+
     renderCharts(stats);
     renderSourceBreakdown(stats.by_source_type || []);
 
@@ -528,20 +569,27 @@ async function loadEvents() {
     setDashboardError(data.detail || "Could not load recent events.");
     return;
   }
-  eventsBody.innerHTML = "";
+  eventsBody.replaceChildren();
   emptyEvents.classList.toggle("hidden", data.events.length !== 0);
   data.events.forEach(event => {
     const tr = document.createElement("tr");
-    tr.innerHTML =
-      "<td>" + escapeHtml(new Date(event.created_at).toLocaleString()) + "</td>" +
-      "<td>" + escapeHtml(event.source_type) + "</td>" +
-      "<td>" + escapeHtml(event.target_language) + "</td>" +
-      "<td>" + escapeHtml(event.subject || "—") + "</td>" +
-      "<td>" + escapeHtml(event.grade || "—") + "</td>" +
-      "<td>" + formatNumber(event.characters) + "</td>" +
-      "<td>" + escapeHtml(event.model || "—") + "</td>" +
-      "<td>" + formatNumber(event.duration_ms) + " ms</td>" +
-      '<td class="' + (event.success ? "status-ok" : "status-fail") + '">' + (event.success ? "Success" : "Failed") + "</td>";
+    const cells = [
+      new Date(event.created_at).toLocaleString(),
+      event.source_type,
+      event.target_language,
+      event.subject || "—",
+      event.grade || "—",
+      formatNumber(event.characters),
+      event.model || "—",
+      formatNumber(event.duration_ms) + " ms",
+      event.success ? "Success" : "Failed"
+    ];
+    cells.forEach((value, index) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      if (index === cells.length - 1) td.className = event.success ? "status-ok" : "status-fail";
+      tr.appendChild(td);
+    });
     eventsBody.appendChild(tr);
   });
   const totalPages = data.total_pages || 0;
@@ -551,6 +599,245 @@ async function loadEvents() {
   eventMeta.textContent = data.total ? formatNumber(data.total) + " logged event" + (data.total === 1 ? "" : "s") : "No translations yet";
 }
 
+async function libraryRequest(url, options = {}) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "Library request failed.");
+  return data;
+}
+
+function fillSelect(select, values, label) {
+  const current = select.value;
+  select.replaceChildren();
+  const first = document.createElement("option");
+  first.value = "";
+  first.textContent = label;
+  select.appendChild(first);
+  values.forEach(value => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  if (values.includes(current)) select.value = current;
+}
+
+async function loadLibraryFilters() {
+  try {
+    const data = await libraryRequest("/api/library/filters");
+    fillSelect(libraryLanguage, data.languages || [], "All languages");
+    fillSelect(librarySubject, data.subjects || [], "All subjects");
+    fillSelect(libraryGrade, data.grades || [], "All grades");
+  } catch (err) {
+    setLibraryError(err.message);
+  }
+}
+
+function createLibraryCard(item) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "library-card";
+  card.addEventListener("click", () => openLibraryItem(item.id));
+
+  const top = document.createElement("div");
+  top.className = "library-card-top";
+  const title = document.createElement("h3");
+  title.textContent = item.title;
+  const date = document.createElement("time");
+  date.textContent = new Date(item.updated_at || item.created_at).toLocaleDateString();
+  top.append(title, date);
+
+  const meta = document.createElement("div");
+  meta.className = "library-meta";
+  [item.target_language, item.subject || "No subject", item.grade || "No grade", item.source_type].forEach(value => {
+    const span = document.createElement("span");
+    span.textContent = value;
+    meta.appendChild(span);
+  });
+
+  const preview = document.createElement("p");
+  preview.textContent = item.preview || "No translated preview available.";
+  card.append(top, meta, preview);
+  return card;
+}
+
+async function loadLibrary() {
+  setLibraryError("");
+  try {
+    const params = new URLSearchParams({
+      page: libraryPage,
+      page_size: 12,
+      q: librarySearch.value.trim(),
+      language: libraryLanguage.value,
+      subject: librarySubject.value,
+      grade: libraryGrade.value
+    });
+    const data = await libraryRequest("/api/library?" + params.toString());
+    libraryItems.replaceChildren();
+    libraryEmpty.classList.toggle("hidden", data.items.length !== 0);
+    data.items.forEach(item => libraryItems.appendChild(createLibraryCard(item)));
+    libraryTotalPages = data.total_pages || 0;
+    libraryPageLabel.textContent = libraryTotalPages ? "Page " + data.page + " of " + libraryTotalPages : "No pages";
+    libraryPrev.disabled = data.page <= 1;
+    libraryNext.disabled = !libraryTotalPages || data.page >= libraryTotalPages;
+  } catch (err) {
+    setLibraryError(err.message);
+  }
+}
+
+async function openLibraryItem(id) {
+  setLibraryError("");
+  try {
+    const item = await libraryRequest("/api/library/" + encodeURIComponent(id));
+    libraryItem = item;
+    libraryListView.classList.add("hidden");
+    libraryDetailView.classList.remove("hidden");
+    libraryDetailTitle.value = item.title;
+    libraryDetailInfo.textContent = [item.target_language, item.subject || "No subject", item.grade || "No grade", item.source_type].join(" • ");
+    libraryOriginalText.textContent = item.original_text;
+    libraryTranslatedText.value = item.translated_text;
+  } catch (err) {
+    setLibraryError(err.message);
+  }
+}
+
+function showLibraryList() {
+  libraryItem = null;
+  libraryDetailView.classList.add("hidden");
+  libraryListView.classList.remove("hidden");
+  loadLibrary();
+}
+
+librarySearchBtn.addEventListener("click", () => { libraryPage = 1; loadLibrary(); });
+librarySearch.addEventListener("keydown", event => {
+  if (event.key === "Enter") { libraryPage = 1; loadLibrary(); }
+});
+[libraryLanguage, librarySubject, libraryGrade].forEach(select => {
+  select.addEventListener("change", () => { libraryPage = 1; loadLibrary(); });
+});
+libraryPrev.addEventListener("click", () => {
+  if (libraryPage > 1) { libraryPage -= 1; loadLibrary(); }
+});
+libraryNext.addEventListener("click", () => {
+  if (libraryPage < libraryTotalPages) { libraryPage += 1; loadLibrary(); }
+});
+libraryBackBtn.addEventListener("click", showLibraryList);
+
+librarySaveBtn.addEventListener("click", async () => {
+  if (!libraryItem) return;
+  librarySaveBtn.disabled = true;
+  setLibraryError("");
+  try {
+    const updated = await libraryRequest("/api/library/" + libraryItem.id, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: libraryDetailTitle.value.trim(),
+        translated_text: libraryTranslatedText.value
+      })
+    });
+    libraryItem = updated;
+    libraryDetailTitle.value = updated.title;
+    libraryDetailInfo.textContent = [updated.target_language, updated.subject || "No subject", updated.grade || "No grade", updated.source_type].join(" • ");
+    libraryTranslatedText.value = updated.translated_text;
+    setLibraryError("");
+    showNotice('Saved changes to "' + updated.title + '".');
+  } catch (err) {
+    setLibraryError(err.message);
+  } finally {
+    librarySaveBtn.disabled = false;
+  }
+});
+
+libraryCopyBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(libraryTranslatedText.value);
+    showNotice("Translated material copied to clipboard.");
+  } catch {
+    setLibraryError("Could not copy the translated material.");
+  }
+});
+
+libraryDownloadBtn.addEventListener("click", () => {
+  if (!libraryItem) return;
+  const blob = new Blob([libraryTranslatedText.value], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = (libraryItem.title || "teaching-material").replace(/[^a-z0-9_-]+/gi, "-") + ".txt";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+});
+
+libraryDeleteBtn.addEventListener("click", async () => {
+  if (!libraryItem) return;
+  if (!window.confirm('Delete "' + libraryItem.title + '"? This cannot be undone.')) return;
+  try {
+    await libraryRequest("/api/library/" + libraryItem.id, { method: "DELETE" });
+    showNotice("Saved material deleted.");
+    showLibraryList();
+  } catch (err) {
+    setLibraryError(err.message);
+  }
+});
+
+libraryLoadBtn.addEventListener("click", () => {
+  if (!libraryItem) return;
+  sourceText.value = libraryItem.original_text;
+  language.value = libraryItem.target_language;
+  subject.value = libraryItem.subject || "";
+  grade.value = libraryItem.grade || "";
+  currentSourceType = libraryItem.source_type;
+  savedResultId = null;
+  saveTitle.value = libraryItem.title;
+  output.className = "output";
+  output.textContent = libraryItem.translated_text;
+  copyBtn.disabled = false;
+  downloadBtn.disabled = false;
+  saveBtn.disabled = false;
+  showTab("translateView");
+  showNotice('Loaded "' + libraryItem.title + '" into Translate.');
+  updateCount();
+});
+
+saveBtn.addEventListener("click", async () => {
+  const translatedText = output.textContent.trim();
+  const originalText = sourceText.value.trim();
+  if (!translatedText || !originalText || savedResultId !== null) return;
+
+  const title = saveTitle.value.trim() || originalText.slice(0, 60).trim();
+  if (!title) {
+    showNotice("Add a title before saving.", true);
+    return;
+  }
+
+  saveBtn.disabled = true;
+  try {
+    const saved = await libraryRequest("/api/library", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        subject: subject.value.trim(),
+        grade: grade.value.trim(),
+        target_language: language.value,
+        source_type: currentSourceType,
+        original_text: originalText,
+        translated_text: translatedText
+      })
+    });
+    savedResultId = saved.id;
+    saveTitle.value = saved.title;
+    showNotice('Saved "' + saved.title + '" to Library.');
+  } catch (err) {
+    saveBtn.disabled = false;
+    showNotice(err.message, true);
+  }
+});
+
+// Admin login
 loginBtn.addEventListener("click", async () => {
   const password = adminPassword.value;
   if (!password) {
