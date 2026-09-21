@@ -281,7 +281,7 @@ async def translate_text(
 
     client = get_translation_client()
     glossary_terms = (
-        get_relevant_terms(text, target_language, subject, limit=60)
+        get_relevant_terms(text, target_language, subject)
         if use_glossary
         else []
     )
@@ -998,7 +998,6 @@ async def translate_pdf(
             "\n".join(block["text"] for block in all_blocks),
             target_language,
             subject,
-            limit=60,
         )
         if use_glossary
         else []
