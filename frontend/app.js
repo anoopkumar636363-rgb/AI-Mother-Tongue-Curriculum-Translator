@@ -537,10 +537,11 @@ async function loadDashboard() {
     document.getElementById("statChars").textContent = formatNumber(stats.total_characters);
     document.getElementById("statAvg").textContent = formatNumber(Math.round(stats.average_duration_ms)) + " ms";
 
-    const savedCard = document.getElementById("statSaved");
-    if (savedCard) {
+    const savedCard = document.getElementById("statSavedCard");
+    const savedValue = document.getElementById("statSaved");
+    if (savedCard && savedValue) {
       savedCard.classList.toggle("hidden", stats.translations === undefined);
-      if (stats.translations !== undefined) savedCard.textContent = formatNumber(stats.translations);
+      if (stats.translations !== undefined) savedValue.textContent = formatNumber(stats.translations);
     }
 
     renderCharts(stats);
