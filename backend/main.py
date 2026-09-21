@@ -709,8 +709,26 @@ def get_font_resources(target_language: str):
 @font-face {{
     font-family: "{family}";
     src: url("{filename}");
-    font-weight: 100 900;
+    font-weight: normal;
     font-style: normal;
+}}
+@font-face {{
+    font-family: "{family}";
+    src: url("{filename}");
+    font-weight: bold;
+    font-style: normal;
+}}
+@font-face {{
+    font-family: "{family}";
+    src: url("{filename}");
+    font-weight: normal;
+    font-style: italic;
+}}
+@font-face {{
+    font-family: "{family}";
+    src: url("{filename}");
+    font-weight: bold;
+    font-style: italic;
 }}
 * {{
     font-family: "{family}";
