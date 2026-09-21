@@ -21,6 +21,7 @@ const loadingLabel = document.getElementById("loadingLabel");
 const health = document.getElementById("health");
 const subject = document.getElementById("subject");
 const grade = document.getElementById("grade");
+const useGlossary = document.getElementById("useGlossary");
 
 function updateCount() {
   charCount.textContent = sourceText.value.length.toLocaleString();
@@ -170,6 +171,7 @@ translatePdfBtn.addEventListener("click", async () => {
   form.append("target_language", language.value);
   form.append("subject", subject.value.trim());
   form.append("grade", grade.value.trim());
+  form.append("use_glossary", useGlossary.checked ? "true" : "false");
 
   try {
     const res = await fetch("/api/translate-pdf", {
@@ -197,6 +199,7 @@ translatePdfBtn.addEventListener("click", async () => {
     link.remove();
     URL.revokeObjectURL(url);
 
+    const glossaryUsed = res.headers.get("X-Glossary-Terms-Used");
     const pages = res.headers.get("X-PDF-Pages");
     const batches = res.headers.get("X-Translation-Batches");
     const workers = res.headers.get("X-Translation-Workers");
@@ -207,7 +210,8 @@ translatePdfBtn.addEventListener("click", async () => {
       " • layout preserved" +
       (pages ? " • " + pages + " pages" : "") +
       (batches ? " • " + batches + " AI batches" : "") +
-      (workers ? " • " + workers + " workers" : "")
+      (workers ? " • " + workers + " workers" : "") +
+      (glossaryUsed ? " • " + glossaryUsed + " glossary terms" : "")
     );
   } catch (err) {
     setLoading(false);
@@ -305,6 +309,14 @@ translateBtn.addEventListener("click", async () => {
     await animateTyping(data.text, output);
 
     setLoading(false);
+    const glossaryMissing = Array.isArray(data.glossary_missing) ? data.glossary_missing : [];
+    if (glossaryMissing.length) {
+      showNotice(
+        "Translation complete • glossary terms not applied: " +
+        glossaryMissing.join(", "),
+        true
+      );
+    }
     copyBtn.disabled = false;
     downloadBtn.disabled = false;
     saveBtn.disabled = false;
@@ -360,7 +372,12 @@ fetch("/api/health")
   .then(r => r.json())
   .then(data => {
     const models = Array.isArray(data.models) ? data.models.join(" → ") : "Gemini";
-    health.textContent = `● API ready • ${models}`;
+    if (data.gemini_configured === false) {
+      health.textContent = "● Gemini API key not configured";
+      showNotice(data.message || "Add GEMINI_API_KEY to .env before translating.", true);
+    } else {
+      health.textContent = `● API ready • ${models}`;
+    }
   })
   .catch(() => {
     health.textContent = "● Start the FastAPI server";
