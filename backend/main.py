@@ -4,6 +4,8 @@ import logging
 import os
 import random
 import re
+import time
+from functools import wraps
 from html import escape as html_escape
 from io import BytesIO
 from pathlib import Path
@@ -17,6 +19,9 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel
 from pypdf import PdfReader
+
+from backend.db import init_db, record_event, set_event_context, get_event_context
+from backend.routes_admin import router as admin_router
 
 load_dotenv(override=True)
 
@@ -104,6 +109,53 @@ app = FastAPI(
 )
 
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
+app.include_router(admin_router)
+init_db()
+
+
+def log_event(source_type):
+    """Record usage for tracked endpoints without affecting requests."""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            started = time.perf_counter()
+            try:
+                set_event_context(
+                    target_language=kwargs.get("target_language", ""),
+                    subject=kwargs.get("subject", "") or None,
+                    grade=kwargs.get("grade", "") or None,
+                    characters=0,
+                    model=None,
+                    success=1,
+                    error_message=None,
+                )
+                return await func(*args, **kwargs)
+            except Exception as exc:
+                set_event_context(
+                    success=0,
+                    error_message=str(getattr(exc, "detail", exc)),
+                )
+                raise
+            finally:
+                elapsed = int((time.perf_counter() - started) * 1000)
+                context = get_event_context()
+                try:
+                    record_event(
+                        source_type=source_type,
+                        created_at=None,
+                        target_language=context.get("target_language", ""),
+                        subject=context.get("subject"),
+                        grade=context.get("grade"),
+                        characters=int(context.get("characters") or 0),
+                        model=context.get("model"),
+                        duration_ms=elapsed,
+                        success=int(context.get("success", 1)),
+                        error_message=context.get("error_message"),
+                    )
+                except Exception as log_exc:
+                    logger.exception("Usage logging failed and was ignored: %s", log_exc)
+        return wrapper
+    return decorator
 
 
 def validate_target_language(target_language: str) -> str:
@@ -199,11 +251,15 @@ async def health():
 
 
 @app.post("/api/translate")
+@log_event("text")
 async def translate_text(
     text: str = Form(...),
     target_language: str = Form(...),
+    subject: str = Form(""),
+    grade: str = Form(""),
 ):
     text = text.strip()
+    set_event_context(subject=subject or None, grade=grade or None, characters=len(text))
 
     if not text:
         raise HTTPException(status_code=400, detail="Please enter some curriculum text.")
@@ -221,6 +277,7 @@ async def translate_text(
     errors = []
 
     for model in MODEL_LIST:
+        set_event_context(model=model)
         try:
             config = types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(
@@ -331,6 +388,7 @@ def extract_selectable_pdf_text(data: bytes):
 
 
 @app.post("/api/extract-pdf")
+@log_event("pdf")
 async def extract_pdf(file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a PDF file.")
@@ -355,6 +413,7 @@ async def extract_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"Could not read this PDF: {exc}") from exc
 
     if text:
+        set_event_context(characters=len(text))
         if len(text) > MAX_CHARS:
             logger.warning(
                 "PDF text for %s exceeded MAX_CHARS=%d; returning truncated text",
@@ -386,6 +445,7 @@ async def extract_pdf(file: UploadFile = File(...)):
 
     try:
         text, used_model = await extract_pdf_with_gemini(client, data)
+        set_event_context(model=used_model, characters=len(text))
     except Exception as exc:
         logger.exception("AI PDF extraction failed")
         raise HTTPException(
@@ -677,16 +737,17 @@ async def translate_layout_blocks(client: genai.Client, blocks, target_language:
                 total_batches,
                 used_model,
             )
-            completed[batch_index] = translated
+            completed[batch_index] = (translated, used_model)
 
         if pending:
             await asyncio.sleep(1.0)
 
     translated_by_id = {}
     for batch_index in range(total_batches):
-        translated_by_id.update(completed[batch_index])
+        translated_by_id.update(completed[batch_index][0])
 
-    return translated_by_id
+    models_used = sorted({model for _, model in completed.values()}) if completed else []
+    return translated_by_id, models_used
 
 
 def block_html(text: str) -> str:
@@ -838,14 +899,18 @@ def save_pdf_bytes(doc) -> bytes:
 
 
 @app.post("/api/translate-pdf")
+@log_event("pdf-layout")
 async def translate_pdf(
     file: UploadFile = File(...),
     target_language: str = Form(...),
+    subject: str = Form(""),
+    grade: str = Form(""),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a PDF file.")
 
     validate_target_language(target_language)
+    set_event_context(subject=subject or None, grade=grade or None)
 
     data = await file.read()
     if not data:
@@ -871,13 +936,16 @@ async def translate_pdf(
         ) from exc
 
     all_blocks = [block for page_blocks in pages for block in page_blocks]
+    set_event_context(characters=sum(len(block["text"]) for block in all_blocks))
 
     try:
-        translated_by_id = await translate_layout_blocks(
+        translated_by_id, models_used = await translate_layout_blocks(
             client,
             all_blocks,
             target_language,
         )
+        if models_used:
+            set_event_context(model=",".join(models_used))
 
         await asyncio.to_thread(
             apply_layout_translations,
@@ -976,6 +1044,7 @@ def validate_image_bytes(data: bytes):
 
 
 @app.post("/api/extract-image")
+@log_event("image")
 async def extract_image(file: UploadFile = File(...)):
     mime_type = normalize_image_mime(file)
     if not mime_type:
@@ -1026,6 +1095,7 @@ Rules:
             text = (response.text or "").strip()
 
             if text:
+                set_event_context(characters=len(text), model=model)
                 if len(text) > MAX_CHARS:
                     logger.warning(
                         "Image OCR output exceeded MAX_CHARS=%d; truncating response",
