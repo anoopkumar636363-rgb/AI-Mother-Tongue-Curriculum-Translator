@@ -168,24 +168,19 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ~~~
 
-### 3. Add your Gemini API keys and admin password
+### 3. Configure Gemini
 
-Copy .env.example to .env and add:
+Copy `.env.example` to `.env` and add:
 
-~~~env
-GEMINI_TRANSLATION_API_KEY=your_translation_key_here
-GEMINI_PDF_API_KEY=your_pdf_key_here
-
-# Optional backward-compatible fallback:
-GEMINI_API_KEY=your_key_here
-
-# Required for the Teacher/Admin dashboard:
-ADMIN_PASSWORD=choose_a_strong_dashboard_password
+~~~text
+GEMINI_API_KEY=your_gemini_api_key_here
 ~~~
 
-Do not commit .env or expose API keys in screenshots, source code, or GitHub.
+A single `GEMINI_API_KEY` is enough for text translation, PDF extraction / translation, and image OCR. The dedicated translation/PDF key variables remain supported.
 
 ### 4. Start the app
+
+Run this from the repository root:
 
 ~~~bash
 uvicorn backend.main:app --reload
@@ -193,25 +188,21 @@ uvicorn backend.main:app --reload
 
 Open http://127.0.0.1:8000
 
-## Tests
-
-Install the dependencies and run:
+### 5. Run tests
 
 ~~~bash
 pytest
 ~~~
 
-The test suite covers:
+## Working features
 
-- structured translated-block validation
-- layout batch splitting
-- supported/unsupported target-language validation
-- admin login with correct, incorrect, and missing passwords
-- dashboard stats aggregation from sample SQLite events
-- logging failures being ignored so they cannot break /api/translate
-- library create/read/update/delete
-- library search, filters, and pagination
-- library validation and 404 handling
+- Text translation
+- PDF text extraction
+- Layout-preserving PDF translation
+- Image OCR
+- Saved teaching-material library
+- Translation glossary
+- Teacher/Admin dashboard with Chart.js
 
 ## Project structure
 
