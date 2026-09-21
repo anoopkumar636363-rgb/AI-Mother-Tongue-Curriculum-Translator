@@ -159,21 +159,44 @@ async def translate_text(
 
     client = get_client()
     prompt = build_translation_prompt(text, target_language)
-    # Gemini 3.x no longer needs the legacy temperature setting here.
-    # Keeping the request minimal also avoids model-specific config errors.
-    config = None
+    # Translation does not need deep reasoning. Gemini documents
+    # "minimal" as the latency-optimized level for simple requests.
+    # 3.7/3.8 do not support "minimal", so use "low" for those fallbacks.
+    errors = []
 
-    try:
-        response, used_model = generate_with_fallback(
-            client,
-            prompt,
-            config=config,
-        )
-    except Exception as exc:
+    for model in MODEL_LIST:
+        try:
+            if model in {"gemini-3.5-flash-lite", "gemini-3.6-flash"}:
+                thinking_level = "minimal"
+            else:
+                thinking_level = "low"
+
+            config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=thinking_level
+                )
+            )
+
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config,
+            )
+            used_model = model
+            break
+
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+            if not is_retryable_model_error(exc):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Translation failed with {model}: {exc}",
+                ) from exc
+    else:
         raise HTTPException(
             status_code=502,
-            detail=f"Translation failed after trying {len(MODEL_LIST)} model(s): {exc}",
-        ) from exc
+            detail="Translation failed. Tried: " + " | ".join(errors),
+        )
 
     translated_text = (response.text or "").strip()
 
