@@ -53,7 +53,6 @@
               <span>📷 Scan / Image</span>
             </label>
             <button id="translatePdfBtn" class="ghost-btn pdf-translate-btn" disabled>Translate PDF ↔ Keep Layout</button>
-            <button id="addGlossaryQuickBtn" class="ghost-btn">Add to glossary</button>
             <button id="clearBtn" class="ghost-btn">Clear</button>
           </div>
 
@@ -138,7 +137,6 @@
       </div>
 
       <div id="notice" class="notice hidden"></div>
-      <div id="glossaryStatus" class="glossary-status hidden" aria-live="polite"></div>
     </section>
 
         <section id="libraryView" class="view library-view card hidden">
@@ -205,17 +203,9 @@
           <div class="badge">✦ TECHNICAL TERMINOLOGY</div>
           <h2>Translation Glossary</h2>
           <p>Keep important curriculum terms consistent across translations.</p>
-        </div>
-        <div class="glossary-actions">
-          <button id="glossaryImportBtn" class="ghost-btn">Import CSV</button>
-          <input id="glossaryImportInput" type="file" accept=".csv,text/csv" class="hidden" />
-          <button id="glossaryExportBtn" class="ghost-btn">Export CSV</button>
-          <a id="glossaryTemplateLink" class="ghost-btn glossary-link" href="#">Download CSV template</a>
-        </div>
-      </div>
+        </div></div>
 
       <div id="glossaryError" class="library-error hidden"></div>
-      <div id="glossaryImportSummary" class="glossary-import-summary hidden"></div>
 
       <div class="glossary-toolbar">
         <select id="glossaryLanguageFilter"><option value="">All languages</option></select>
@@ -232,7 +222,6 @@
               <th>Language</th>
               <th>Translated term</th>
               <th>Subject</th>
-              <th>Notes</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -273,10 +262,6 @@
           <div class="field">
             <label for="glossarySubject">Subject <span>(optional)</span></label>
             <input id="glossarySubject" type="text" maxlength="100" placeholder="e.g. Electrical Engineering" />
-          </div>
-          <div class="field glossary-notes-field">
-            <label for="glossaryNotes">Notes <span>(optional)</span></label>
-            <textarea id="glossaryNotes" maxlength="500" rows="3" placeholder="Usage or teacher notes"></textarea>
           </div>
           </div>
           <div class="glossary-form-actions">
@@ -325,7 +310,6 @@
           <div class="stat-card"><span>Average time</span><strong id="statAvg">0 ms</strong></div>
           <div class="stat-card" id="statSavedCard"><span>Saved materials</span><strong id="statSaved">0</strong></div>
           <div class="stat-card"><span>Glossary terms</span><strong id="statGlossary">0</strong></div>
-          <div class="stat-card"><span>Glossary terms</span><strong id="statGlossary">0</strong></div>
         </div>
 
         <div class="chart-grid">
@@ -343,9 +327,6 @@
           <div id="sourceBreakdown" class="source-breakdown"></div>
         </div>
 
-        <div class="chart-card source-card">
-          <h3>Glossary terms by language</h3>
-          <div id="glossaryLanguageBreakdown" class="source-breakdown"></div>
         </div>
 
         <div class="events-card">
