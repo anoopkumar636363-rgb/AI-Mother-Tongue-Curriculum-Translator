@@ -218,6 +218,7 @@ The test suite covers:
 ~~~
 backend/
   main.py
+  config.py
   db.py
   routes_admin.py
   routes_library.py
