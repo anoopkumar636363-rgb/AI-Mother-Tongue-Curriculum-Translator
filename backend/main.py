@@ -288,51 +288,124 @@ async def extract_pdf(file: UploadFile = File(...)):
     }
 
 
+IMAGE_MODELS = [
+    model for model in MODEL_LIST
+    if "flash" in model.lower() and "image" not in model.lower()
+] or MODEL_LIST
+
+
+def normalize_image_mime(file: UploadFile) -> str:
+    """Return a Gemini-supported image MIME type based on the upload."""
+    mime = (file.content_type or "").lower().split(";")[0].strip()
+    allowed = {
+        "image/png",
+        "image/jpeg",
+        "image/jpg",
+        "image/webp",
+        "image/heic",
+        "image/heif",
+        "image/gif",
+        "image/avif",
+    }
+    if mime in allowed:
+        return "image/jpeg" if mime == "image/jpg" else mime
+
+    filename = (file.filename or "").lower()
+    extension_map = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".heic": "image/heic",
+        ".heif": "image/heif",
+        ".gif": "image/gif",
+        ".avif": "image/avif",
+    }
+    for extension, mapped_mime in extension_map.items():
+        if filename.endswith(extension):
+            return mapped_mime
+
+    return ""
+
+
 @app.post("/api/extract-image")
 async def extract_image(file: UploadFile = File(...)):
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Please upload a JPG, PNG, WEBP, or other image.")
+    mime_type = normalize_image_mime(file)
+    if not mime_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported image. Please upload PNG, JPG/JPEG, WEBP, HEIC/HEIF, GIF, or AVIF.",
+        )
 
     data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="The uploaded image is empty.")
+
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Image is too large. Keep it under 10 MB.")
+
+    # Validate that the uploaded bytes are actually an image. This catches
+    # mislabeled files before sending them to Gemini.
+    try:
+        from PIL import Image, UnidentifiedImageError
+
+        image = Image.open(BytesIO(data))
+        image.verify()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is not a valid readable image.",
+        ) from exc
 
     client = get_client()
 
     prompt = """
-Read the educational textbook/curriculum page in this image.
+You are an OCR engine for educational curriculum.
 
-Extract all readable text in the correct order. Preserve headings, bullets,
-numbering, formulas, examples, and paragraphs. Do not translate it.
-Return only the extracted text. If something is unreadable, write [unclear]
-instead of inventing content.
+Read ALL visible text in this image. Return the text in natural reading order.
+
+Rules:
+1. Preserve headings and subheadings.
+2. Preserve numbered lists and bullet points.
+3. Preserve paragraphs, examples, formulas, equations, units, symbols, and technical terms.
+4. Do not translate the text.
+5. Do not summarize or explain anything.
+6. Do not invent missing text.
+7. If a small portion is genuinely unreadable, write [unclear].
+8. Return ONLY the extracted text.
 """.strip()
 
-    try:
-        response, used_model = generate_with_fallback(
-            client,
-            [
-                types.Part.from_bytes(data=data, mime_type=file.content_type),
-                prompt,
-            ],
-            config=types.GenerateContentConfig(temperature=0),
-        )
-        text = (response.text or "").strip()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Image OCR failed after trying {len(MODEL_LIST)} model(s): {exc}",
-        ) from exc
+    errors = []
+    for model in IMAGE_MODELS:
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=[
+                    types.Part.from_bytes(data=data, mime_type=mime_type),
+                    prompt,
+                ],
+                config=types.GenerateContentConfig(temperature=0),
+            )
+            text = (response.text or "").strip()
+            if text:
+                if len(text) > MAX_CHARS:
+                    text = text[:MAX_CHARS]
+                return {
+                    "filename": file.filename,
+                    "text": text,
+                    "characters": len(text),
+                    "model": model,
+                }
+            errors.append(f"{model}: empty response")
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+            if not is_retryable_model_error(exc):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Image OCR failed with {model}: {exc}",
+                ) from exc
 
-    if not text:
-        raise HTTPException(status_code=422, detail="No readable text was found in the image.")
-
-    if len(text) > MAX_CHARS:
-        text = text[:MAX_CHARS]
-
-    return {
-        "filename": file.filename,
-        "text": text,
-        "characters": len(text),
-        "model": used_model,
-    }
+    raise HTTPException(
+        status_code=502,
+        detail="Image OCR failed. Tried: " + " | ".join(errors),
+    )
