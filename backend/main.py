@@ -21,6 +21,12 @@ from pydantic import BaseModel
 from pypdf import PdfReader
 
 from backend.db import init_db, record_event, set_event_context, get_event_context
+from backend.glossary import (
+    build_glossary_prompt_block,
+    check_glossary_missing,
+    get_relevant_terms,
+    term_matches,
+)
 from backend.routes_admin import router as admin_router
 
 load_dotenv(override=True)
@@ -100,7 +106,9 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 app.include_router(admin_router)
 from backend.routes_library import router as library_router
+from backend.routes_glossary import router as glossary_router
 app.include_router(library_router)
+app.include_router(glossary_router)
 init_db()
 
 
@@ -208,7 +216,10 @@ def is_retryable_model_error(exc: Exception) -> bool:
     )
 
 
-def build_translation_prompt(text: str, target_language: str) -> str:
+def build_translation_prompt(text: str, target_language: str, glossary_terms=None) -> str:
+    glossary_block = build_glossary_prompt_block(glossary_terms or [])
+    glossary_section = f"\n\n{glossary_block}" if glossary_block else ""
+
     return f"""
 You are an educational curriculum translator.
 
@@ -221,7 +232,7 @@ Rules:
 4. Keep internationally standard scientific, mathematical, programming, and technical terms when translating them would reduce clarity.
 5. Do not add facts that are not present in the source.
 6. Do not summarize or shorten the content.
-7. Return ONLY the translated curriculum. Do not add commentary.
+7. Return ONLY the translated curriculum. Do not add commentary.{glossary_section}
 
 CURRICULUM:
 {text}
@@ -248,6 +259,7 @@ async def translate_text(
     target_language: str = Form(...),
     subject: str = Form(""),
     grade: str = Form(""),
+    use_glossary: bool = Form(True),
 ):
     text = text.strip()
     set_event_context(subject=subject or None, grade=grade or None, characters=len(text))
@@ -264,7 +276,13 @@ async def translate_text(
         )
 
     client = get_translation_client()
-    prompt = build_translation_prompt(text, target_language)
+    glossary_terms = (
+        get_relevant_terms(text, target_language, subject, limit=60)
+        if use_glossary
+        else []
+    )
+    glossary_terms_used = [item["source_term"] for item in glossary_terms]
+    prompt = build_translation_prompt(text, target_language, glossary_terms)
     errors = []
 
     for model in MODEL_LIST:
@@ -285,9 +303,18 @@ async def translate_text(
             if not translated_text:
                 raise ValueError("Gemini returned an empty translation.")
 
+            glossary_missing = check_glossary_missing(translated_text, glossary_terms)
+            if glossary_missing:
+                logger.warning(
+                    "Glossary terms missing from normal translation output: %s",
+                    glossary_missing,
+                )
+
             return {
                 "text": translated_text,
                 "model": model,
+                "glossary_terms_used": glossary_terms_used,
+                "glossary_missing": glossary_missing,
             }
 
         except Exception as exc:
@@ -551,8 +578,10 @@ def extract_layout_blocks(pdf_data: bytes):
         raise
 
 
-def build_layout_translation_prompt(blocks, target_language: str) -> str:
+def build_layout_translation_prompt(blocks, target_language: str, glossary_terms=None) -> str:
     payload = [{"id": block["id"], "text": block["text"]} for block in blocks]
+    glossary_block = build_glossary_prompt_block(glossary_terms or [])
+    glossary_section = f"\n\n{glossary_block}" if glossary_block else ""
     return f"""
 You are translating educational PDF text into {target_language}.
 
@@ -566,7 +595,7 @@ Rules:
 4. Preserve line breaks when they are meaningful to the source.
 5. Do not summarize, merge, split, reorder, or omit blocks.
 6. Do not add explanations or commentary.
-7. Use natural language appropriate for a student.
+7. Use natural language appropriate for a student.{glossary_section}
 
 INPUT BLOCKS:
 {json.dumps(payload, ensure_ascii=False)}
@@ -614,9 +643,14 @@ def validate_translated_batch(batch, response_text):
     return {item.id: item.text for item in parsed.blocks}
 
 
-async def translate_batch_with_fallback(client, batch, target_language: str):
+async def translate_batch_with_fallback(
+    client,
+    batch,
+    target_language: str,
+    glossary_terms=None,
+):
     """Translate one batch through the configured PDF model fallback chain."""
-    prompt = build_layout_translation_prompt(batch, target_language)
+    prompt = build_layout_translation_prompt(batch, target_language, glossary_terms)
     last_errors = []
 
     for model in PDF_MODELS:
@@ -668,7 +702,12 @@ async def translate_batch_with_fallback(client, batch, target_language: str):
     )
 
 
-async def translate_layout_blocks(client: genai.Client, blocks, target_language: str):
+async def translate_layout_blocks(
+    client: genai.Client,
+    blocks,
+    target_language: str,
+    glossary_terms=None,
+):
     """
     Translation Brain / Orchestrator.
 
@@ -686,10 +725,17 @@ async def translate_layout_blocks(client: genai.Client, blocks, target_language:
 
     async def run_one(batch_index, batch):
         async with semaphore:
+            batch_text = "\n".join(block["text"] for block in batch)
+            batch_terms = [
+                item
+                for item in (glossary_terms or [])
+                if term_matches(batch_text, item["source_term"])
+            ]
             return await translate_batch_with_fallback(
                 client,
                 batch,
                 target_language,
+                batch_terms,
             )
 
     while pending:
@@ -896,6 +942,7 @@ async def translate_pdf(
     target_language: str = Form(...),
     subject: str = Form(""),
     grade: str = Form(""),
+    use_glossary: bool = Form(True),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a PDF file.")
@@ -929,11 +976,24 @@ async def translate_pdf(
     all_blocks = [block for page_blocks in pages for block in page_blocks]
     set_event_context(characters=sum(len(block["text"]) for block in all_blocks))
 
+    glossary_terms = (
+        get_relevant_terms(
+            "\n".join(block["text"] for block in all_blocks),
+            target_language,
+            subject,
+            limit=60,
+        )
+        if use_glossary
+        else []
+    )
+    glossary_terms_used = [item["source_term"] for item in glossary_terms]
+
     try:
         translated_by_id, models_used = await translate_layout_blocks(
             client,
             all_blocks,
             target_language,
+            glossary_terms,
         )
         if models_used:
             set_event_context(model=",".join(models_used))
@@ -980,6 +1040,7 @@ async def translate_pdf(
             "X-PDF-Blocks": str(len(all_blocks)),
             "X-Translation-Batches": str(len(split_layout_batches(all_blocks))),
             "X-Translation-Workers": str(LAYOUT_WORKERS),
+            "X-Glossary-Terms-Used": str(len(glossary_terms_used)),
         },
     )
 
