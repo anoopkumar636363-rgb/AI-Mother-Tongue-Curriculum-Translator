@@ -21,12 +21,7 @@ from pydantic import BaseModel
 from pypdf import PdfReader
 
 from backend.db import init_db, record_event, set_event_context, get_event_context
-from backend.glossary import (
-    build_glossary_prompt_block,
-    check_glossary_missing,
-    get_relevant_terms,
-    term_matches,
-)
+from backend.glossary import get_relevant_terms
 from backend.routes_admin import router as admin_router
 
 load_dotenv(override=True)
@@ -217,7 +212,16 @@ def is_retryable_model_error(exc: Exception) -> bool:
 
 
 def build_translation_prompt(text: str, target_language: str, glossary_terms=None) -> str:
-    glossary_block = build_glossary_prompt_block(glossary_terms or [])
+    glossary_block = ""
+    if glossary_terms:
+        glossary_lines = [
+            "GLOSSARY (mandatory): translate these terms EXACTLY as given and do not paraphrase:"
+        ]
+        glossary_lines.extend(
+            f"- {item['source_term']} -> {item['translated_term']}"
+            for item in glossary_terms
+        )
+        glossary_block = "\n".join(glossary_lines)
     glossary_section = f"\n\n{glossary_block}" if glossary_block else ""
 
     return f"""
@@ -303,7 +307,11 @@ async def translate_text(
             if not translated_text:
                 raise ValueError("Gemini returned an empty translation.")
 
-            glossary_missing = check_glossary_missing(translated_text, glossary_terms)
+            glossary_missing = [
+                item["source_term"]
+                for item in glossary_terms
+                if item["translated_term"] not in translated_text
+            ]
             if glossary_missing:
                 logger.warning(
                     "Glossary terms missing from normal translation output: %s",
@@ -580,7 +588,16 @@ def extract_layout_blocks(pdf_data: bytes):
 
 def build_layout_translation_prompt(blocks, target_language: str, glossary_terms=None) -> str:
     payload = [{"id": block["id"], "text": block["text"]} for block in blocks]
-    glossary_block = build_glossary_prompt_block(glossary_terms or [])
+    glossary_block = ""
+    if glossary_terms:
+        glossary_lines = [
+            "GLOSSARY (mandatory): translate these terms EXACTLY as given and do not paraphrase:"
+        ]
+        glossary_lines.extend(
+            f"- {item['source_term']} -> {item['translated_term']}"
+            for item in glossary_terms
+        )
+        glossary_block = "\n".join(glossary_lines)
     glossary_section = f"\n\n{glossary_block}" if glossary_block else ""
     return f"""
 You are translating educational PDF text into {target_language}.
@@ -729,7 +746,7 @@ async def translate_layout_blocks(
             batch_terms = [
                 item
                 for item in (glossary_terms or [])
-                if term_matches(batch_text, item["source_term"])
+                if item["source_term"].casefold() in batch_text.casefold()
             ]
             return await translate_batch_with_fallback(
                 client,
