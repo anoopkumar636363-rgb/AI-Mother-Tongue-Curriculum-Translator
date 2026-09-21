@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MotherTongue AI — Curriculum Translator</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div class="bg-orb orb-one"></div>
@@ -163,7 +164,7 @@
         </div>
 
         <div class="chart-grid">
-          <div class="chart-card"><h3>Translations by language</h3><div id="languageChartBars" class="bar-chart"></div></div>
+          <div class="chart-card"><h3>Translations by language</h3><canvas id="languageChart" aria-label="Translations per language"></canvas></div>
           <div class="chart-card"><h3>Translations per day</h3><canvas id="dailyChart"></canvas></div>
         </div>
 
