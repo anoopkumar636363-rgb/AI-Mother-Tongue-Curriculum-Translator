@@ -14,6 +14,34 @@ An AI-powered prototype that converts educational curriculum content into a stud
 - PDF/OCR traffic can use a dedicated Gemini API key
 - Layout-preserving PDF output uses bundled Noto Sans fonts for Indian scripts
 
+## Save / Reuse Library
+
+Teachers can save successful translations as reusable teaching materials from the **Translate** tab and manage them from the **Library** tab.
+
+Library features:
+
+- Save title, subject, grade, target language, source type, original text, and translated text
+- Search saved materials by title, subject, or translated text
+- Filter by language, subject, and grade
+- Paginated library cards with 150-character previews
+- Open a saved material and edit its translated text
+- Copy or download the translated material as `.txt`
+- Delete saved materials after confirmation
+- Load a saved material back into the Translate tab
+- Library data is stored in the SQLite `translations` table at `backend/data/app.db`
+- The existing admin dashboard automatically reports the number of rows in `translations` as **Saved materials**
+
+Library endpoints:
+
+- `POST /api/library` — create a saved teaching material
+- `GET /api/library` — paginated search/filter list without full text
+- `GET /api/library/{id}` — retrieve one complete material
+- `PUT /api/library/{id}` — edit title, subject, grade, and translated text
+- `DELETE /api/library/{id}` — delete a saved material
+- `GET /api/library/filters` — retrieve distinct language, subject, and grade filters
+
+No login is required for the library. The existing password-protected Teacher/Admin dashboard remains unchanged.
+
 ## Teacher / Admin dashboard
 
 The app includes a password-protected dashboard at the top-level **Dashboard** tab.
@@ -28,9 +56,10 @@ Dashboard features:
 - Paginated event table with language, source type, and success filters
 - Recent 20 events in the stats response
 - CSV export
+- Saved materials count from the translations library table
 - Login/logout with the password held only in the browser's in-memory JavaScript variable
 
-Set `ADMIN_PASSWORD` in `.env` before using the dashboard. If it is missing, admin endpoints return HTTP 503. The database stores only usage metadata and counts; it never stores document text or uploaded filenames.
+Set `ADMIN_PASSWORD` in `.env` before using the dashboard. If it is missing, admin endpoints return HTTP 503. The usage log stores only translation metadata and counts; the separate library intentionally stores teaching materials that teachers explicitly choose to save.
 
 The database is created automatically on application startup. `backend/data/` and SQLite database files are ignored by Git.
 
