@@ -12,6 +12,8 @@ const translatePdfBtn = document.getElementById("translatePdfBtn");
 let selectedPdfFile = null;
 const fileStatus = document.getElementById("fileStatus");
 const notice = document.getElementById("notice");
+const loadingBar = document.getElementById("loadingBar");
+const loadingLabel = document.getElementById("loadingLabel");
 const health = document.getElementById("health");
 
 function updateCount() {
@@ -28,6 +30,13 @@ function showNotice(message, error = false) {
 function showFileStatus(message) {
   fileStatus.textContent = message;
   fileStatus.classList.remove("hidden");
+}
+
+function setLoading(active, message = "Working...") {
+  if (!loadingBar) return;
+  loadingBar.classList.toggle("hidden", !active);
+  loadingBar.classList.toggle("running", active);
+  if (loadingLabel) loadingLabel.textContent = message;
 }
 
 function setOutput(text) {
@@ -72,6 +81,7 @@ clearBtn.addEventListener("click", () => {
   downloadBtn.disabled = true;
   fileStatus.classList.add("hidden");
   notice.classList.add("hidden");
+  setLoading(false);
   pdfInput.value = "";
   imageInput.value = "";
   selectedPdfFile = null;
@@ -135,9 +145,10 @@ translatePdfBtn.addEventListener("click", async () => {
   showFileStatus(
     "🧠 Translation brain active • splitting PDF into batches • automatic model fallback enabled"
   );
+  setLoading(true, "🧠 Translation brain is working • batching, translating and rebuilding layout...");
   showNotice(
     "Translating PDF into " + language.value +
-    " • multiple batches run concurrently • each batch uses the same model fallback chain..."
+    " • multiple batches run concurrently • automatic fallback enabled..."
   );
 
   const form = new FormData();
@@ -155,6 +166,7 @@ translatePdfBtn.addEventListener("click", async () => {
       throw new Error(data.detail || "Could not translate the PDF.");
     }
 
+    setLoading(true, "Finishing PDF • assembling the translated document...");
     const blob = await res.blob();
     const disposition = res.headers.get("Content-Disposition") || "";
     const match = disposition.match(/filename="([^"]+)"/i);
@@ -173,6 +185,7 @@ translatePdfBtn.addEventListener("click", async () => {
     const batches = res.headers.get("X-Translation-Batches");
     const workers = res.headers.get("X-Translation-Workers");
 
+    setLoading(false);
     showNotice(
       "Translated PDF downloaded • " + language.value +
       " • layout preserved" +
@@ -181,6 +194,7 @@ translatePdfBtn.addEventListener("click", async () => {
       (workers ? " • " + workers + " workers" : "")
     );
   } catch (err) {
+    setLoading(false);
     showNotice(err.message, true);
   } finally {
     translatePdfBtn.disabled = !selectedPdfFile;
@@ -234,6 +248,7 @@ translateBtn.addEventListener("click", async () => {
   if (labelSpan) labelSpan.textContent = "Translating...";
   else translateBtn.textContent = "Translating...";
 
+  setLoading(true, `Translating into ${language.value}...`);
   showNotice(`Translating into ${language.value}...`);
   output.className = "output";
   output.textContent = "AI is translating...";
@@ -257,12 +272,15 @@ translateBtn.addEventListener("click", async () => {
       throw new Error("The AI returned an empty translation.");
     }
 
+    setLoading(true, "Translation received • displaying result...");
     await animateTyping(data.text, output);
 
+    setLoading(false);
     copyBtn.disabled = false;
     downloadBtn.disabled = false;
     showNotice(`Translation complete • ${language.value}`);
   } catch (err) {
+    setLoading(false);
     output.className = "output empty";
     output.innerHTML = '<div class="empty-icon">!</div><h3>Translation failed</h3><p></p>';
     output.querySelector("p").textContent = err.message;
