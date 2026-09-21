@@ -14,6 +14,35 @@ An AI-powered prototype that converts educational curriculum content into a stud
 - PDF/OCR traffic can use a dedicated Gemini API key
 - Layout-preserving PDF output uses bundled Noto Sans fonts for Indian scripts
 
+## Teacher / Admin dashboard
+
+The app includes a password-protected dashboard at the top-level **Dashboard** tab.
+
+Dashboard features:
+
+- SQLite usage logging in `backend/data/app.db`
+- Translation totals, success/failure counts, success rate, character totals, and average duration
+- Counts by target language, source type, subject, grade, and Gemini model
+- 7 / 30 / 90 day chart ranges
+- Translations-per-language bar chart and daily line chart using Chart.js from a CDN
+- Paginated event table with language, source type, and success filters
+- Recent 20 events in the stats response
+- CSV export
+- Login/logout with the password held only in the browser's in-memory JavaScript variable
+
+Set `ADMIN_PASSWORD` in `.env` before using the dashboard. If it is missing, admin endpoints return HTTP 503. The database stores only usage metadata and counts; it never stores document text or uploaded filenames.
+
+The database is created automatically on application startup. `backend/data/` and SQLite database files are ignored by Git.
+
+### Admin API
+
+- `POST /api/admin/login` — verifies `X-Admin-Password`
+- `GET /api/admin/stats?days=30` — protected dashboard aggregates
+- `GET /api/admin/events?page=1&page_size=25&language=&source_type=&success=` — protected paginated event log
+- `GET /api/admin/export/events.csv` — protected CSV export
+
+All admin endpoints validate their limits and allowed filter values. Admin password comparisons use constant-time comparison and failed authentication has a short delay.
+
 ## Large PDF translation brain
 
 The layout-preserving PDF translator supports PDFs up to **200 MB** when the PDF contains selectable text. PyMuPDF reads selectable text locally, so the full PDF is not sent to Gemini for layout translation. Scanned PDFs use Gemini's native PDF understanding through the dedicated PDF key; Google's documented PDF input limit is 50 MB.
@@ -110,7 +139,7 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ~~~
 
-### 3. Add your Gemini API keys
+### 3. Add your Gemini API keys and admin password
 
 Copy .env.example to .env and add:
 
@@ -120,6 +149,9 @@ GEMINI_PDF_API_KEY=your_pdf_key_here
 
 # Optional backward-compatible fallback:
 GEMINI_API_KEY=your_key_here
+
+# Required for the Teacher/Admin dashboard:
+ADMIN_PASSWORD=choose_a_strong_dashboard_password
 ~~~
 
 Do not commit .env or expose API keys in screenshots, source code, or GitHub.
@@ -140,17 +172,24 @@ Install the dependencies and run:
 pytest
 ~~~
 
-The basic tests cover:
+The test suite covers:
 
 - structured translated-block validation
 - layout batch splitting
 - supported/unsupported target-language validation
+- admin login with correct, incorrect, and missing passwords
+- dashboard stats aggregation from sample SQLite events
+- logging failures being ignored so they cannot break /api/translate
 
 ## Project structure
 
 ~~~
 backend/
   main.py
+  db.py
+  routes_admin.py
+  data/
+    app.db
   fonts/
     NotoSans*.ttf
 frontend/
@@ -159,6 +198,7 @@ frontend/
   app.js
 tests/
   test_main.py
+  test_admin.py
 requirements.txt
 .env.example
 .gitignore
