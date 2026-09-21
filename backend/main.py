@@ -1,22 +1,30 @@
 import asyncio
 import json
+import logging
 import os
 import random
 import re
 from html import escape as html_escape
 from io import BytesIO
+from pathlib import Path
 
+import pymupdf
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
-from pypdf import PdfReader
-import pymupdf
 from pydantic import BaseModel
+from pypdf import PdfReader
 
 load_dotenv(override=True)
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("curriculum-translator")
 
 # Separate Gemini API keys keep PDF/OCR traffic and normal translation traffic
 # in separate quota buckets when the keys belong to separate projects.
@@ -33,10 +41,10 @@ PDF_API_KEY = (
 ).strip()
 
 DEFAULT_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.6-flash",
-    "gemini-3.7-flash",
     "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
 ]
 MODEL_LIST = [
     model.strip()
@@ -47,16 +55,15 @@ PDF_MODELS = [
     model.strip()
     for model in os.getenv(
         "GEMINI_PDF_MODELS",
-        "gemini-3.8-flash,gemini-3.7-flash",
+        ",".join(DEFAULT_MODELS),
     ).split(",")
     if model.strip()
 ]
+
 MAX_CHARS = 30000
 MAX_LAYOUT_PDF_MB = 200
+SCANNED_PDF_GEMINI_MB = 50
 
-# Large-PDF translation brain settings. The PDF itself stays local; only
-# small text batches are sent to Gemini. Each batch uses the SAME fallback
-# chain, so models are failover choices rather than fixed assignments.
 LAYOUT_WORKERS = max(1, int(os.getenv("LAYOUT_WORKERS", "4")))
 LAYOUT_BATCH_CHARS = max(3000, int(os.getenv("LAYOUT_BATCH_CHARS", "8000")))
 LAYOUT_MODEL_RETRIES = max(1, int(os.getenv("LAYOUT_MODEL_RETRIES", "2")))
@@ -76,19 +83,43 @@ ALLOWED_LANGUAGES = {
     "English": "en",
 }
 
+BASE_DIR = Path(__file__).resolve().parent
+FONT_DIR = BASE_DIR / "fonts"
+FONT_FILES = {
+    "Kannada": ("NotoSansKannada.ttf", "NotoSansKannada"),
+    "Hindi": ("NotoSansDevanagari.ttf", "NotoSansDevanagari"),
+    "Marathi": ("NotoSansDevanagari.ttf", "NotoSansDevanagari"),
+    "Telugu": ("NotoSansTelugu.ttf", "NotoSansTelugu"),
+    "Tamil": ("NotoSansTamil.ttf", "NotoSansTamil"),
+    "Malayalam": ("NotoSansMalayalam.ttf", "NotoSansMalayalam"),
+    "Bengali": ("NotoSansBengali.ttf", "NotoSansBengali"),
+    "Gujarati": ("NotoSansGujarati.ttf", "NotoSansGujarati"),
+    "Punjabi": ("NotoSansGurmukhi.ttf", "NotoSansGurmukhi"),
+    "English": ("NotoSans.ttf", "NotoSans"),
+}
+
 app = FastAPI(
     title="AI Mother Tongue Curriculum Translator",
-    version="1.2.0",
+    version="1.3.0",
 )
 
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
+
+def validate_target_language(target_language: str) -> str:
+    if target_language not in ALLOWED_LANGUAGES:
+        raise HTTPException(status_code=400, detail="Unsupported target language.")
+    return target_language
 
 
 def get_translation_client() -> genai.Client:
     if not TRANSLATION_API_KEY:
         raise HTTPException(
             status_code=500,
-            detail="Translation Gemini API key is missing. Add GEMINI_TRANSLATION_API_KEY or GEMINI_API_KEY to your .env file.",
+            detail=(
+                "Translation Gemini API key is missing. Add "
+                "GEMINI_TRANSLATION_API_KEY or GEMINI_API_KEY to your .env file."
+            ),
         )
     return genai.Client(api_key=TRANSLATION_API_KEY)
 
@@ -97,9 +128,20 @@ def get_pdf_client() -> genai.Client:
     if not PDF_API_KEY:
         raise HTTPException(
             status_code=500,
-            detail="PDF Gemini API key is missing. Add GEMINI_PDF_API_KEY or GEMINI_API_KEY to your .env file.",
+            detail=(
+                "PDF Gemini API key is missing. Add "
+                "GEMINI_PDF_API_KEY or GEMINI_API_KEY to your .env file."
+            ),
         )
     return genai.Client(api_key=PDF_API_KEY)
+
+
+def get_thinking_level(model: str) -> str:
+    """Return one valid low-latency thinking level for the configured model."""
+    normalized = model.lower()
+    if normalized in {"gemini-3.8-flash", "gemini-3.7-flash"}:
+        return "low"
+    return "minimal"
 
 
 def is_retryable_model_error(exc: Exception) -> bool:
@@ -120,31 +162,6 @@ def is_retryable_model_error(exc: Exception) -> bool:
             "504",
             "unavailable",
         )
-    )
-
-
-def generate_with_fallback(client: genai.Client, contents, config=None):
-    """Try each configured Gemini model until one succeeds."""
-    errors = []
-
-    for model in MODEL_LIST:
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config,
-            )
-            return response, model
-        except Exception as exc:
-            errors.append(f"{model}: {exc}")
-
-            # Invalid request/authentication errors should be shown immediately.
-            if not is_retryable_model_error(exc):
-                raise
-
-    joined = "\n".join(errors)
-    raise RuntimeError(
-        "All configured Gemini models failed.\n" + joined
     )
 
 
@@ -191,8 +208,7 @@ async def translate_text(
     if not text:
         raise HTTPException(status_code=400, detail="Please enter some curriculum text.")
 
-    if target_language not in ALLOWED_LANGUAGES:
-        raise HTTPException(status_code=400, detail="Unsupported target language.")
+    validate_target_language(target_language)
 
     if len(text) > MAX_CHARS:
         raise HTTPException(
@@ -202,54 +218,44 @@ async def translate_text(
 
     client = get_translation_client()
     prompt = build_translation_prompt(text, target_language)
-    # Translation does not need deep reasoning. Gemini documents
-    # "minimal" as the latency-optimized level for simple requests.
-    # 3.7/3.8 do not support "minimal", so use "low" for those fallbacks.
     errors = []
 
     for model in MODEL_LIST:
         try:
-            if model in {"gemini-3.5-flash-lite", "gemini-3.6-flash"}:
-                thinking_level = "minimal"
-            else:
-                thinking_level = "low"
-
             config = types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(
-                    thinking_level=thinking_level
+                    thinking_level=get_thinking_level(model)
                 )
             )
-
-            response = client.models.generate_content(
+            response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
                 config=config,
             )
-            used_model = model
-            break
+            translated_text = (response.text or "").strip()
+
+            if not translated_text:
+                raise ValueError("Gemini returned an empty translation.")
+
+            return {
+                "text": translated_text,
+                "model": model,
+            }
 
         except Exception as exc:
             errors.append(f"{model}: {exc}")
+            logger.warning("Normal translation failed with %s: %s", model, exc)
+
             if not is_retryable_model_error(exc):
                 raise HTTPException(
                     status_code=502,
                     detail=f"Translation failed with {model}: {exc}",
                 ) from exc
-    else:
-        raise HTTPException(
-            status_code=502,
-            detail="Translation failed. Tried: " + " | ".join(errors),
-        )
 
-    translated_text = (response.text or "").strip()
-
-    if not translated_text:
-        raise HTTPException(status_code=502, detail="The AI returned an empty translation.")
-
-    return {
-        "text": translated_text,
-        "model": used_model,
-    }
+    raise HTTPException(
+        status_code=502,
+        detail="Translation failed. Tried: " + " | ".join(errors),
+    )
 
 
 PDF_EXTRACTION_PROMPT = """
@@ -266,32 +272,62 @@ Requirements:
 """.strip()
 
 
-def extract_pdf_with_gemini(client: genai.Client, data: bytes):
+async def extract_pdf_with_gemini(client: genai.Client, data: bytes):
     """Use the dedicated PDF Gemini key/model pool for scanned PDFs."""
-    uploaded_file = client.files.upload(
-        file=BytesIO(data),
-        config={"mime_type": "application/pdf"},
-    )
+    uploaded_file = None
 
     try:
+        uploaded_file = await asyncio.to_thread(
+            client.files.upload,
+            file=BytesIO(data),
+            config={"mime_type": "application/pdf"},
+        )
+
         errors = []
         for model in PDF_MODELS:
             try:
-                response = client.models.generate_content(
+                response = await client.aio.models.generate_content(
                     model=model,
                     contents=[PDF_EXTRACTION_PROMPT, uploaded_file],
-                    config=types.GenerateContentConfig(temperature=0),
+                    config=types.GenerateContentConfig(),
                 )
-                return (response.text or "").strip(), model
+                text = (response.text or "").strip()
+                if text:
+                    return text, model
+
+                errors.append(f"{model}: empty response")
+                logger.warning("Gemini PDF extraction returned empty text with %s", model)
+
             except Exception as exc:
                 errors.append(f"{model}: {exc}")
+                logger.warning("Gemini PDF extraction failed with %s: %s", model, exc)
+
                 if not is_retryable_model_error(exc):
                     raise
+
         raise RuntimeError("PDF extraction models failed: " + " | ".join(errors))
-    except Exception:
-        # The Gemini Files API keeps uploads temporarily; the backend does not
-        # need to persist the uploaded PDF locally.
-        raise
+
+    finally:
+        if uploaded_file is not None and getattr(uploaded_file, "name", None):
+            try:
+                await asyncio.to_thread(
+                    client.files.delete,
+                    name=uploaded_file.name,
+                )
+                logger.info("Deleted temporary Gemini file %s", uploaded_file.name)
+            except Exception as cleanup_exc:
+                # Cleanup must never turn an otherwise successful request into a failure.
+                logger.warning(
+                    "Could not delete temporary Gemini file %s: %s",
+                    uploaded_file.name,
+                    cleanup_exc,
+                )
+
+
+def extract_selectable_pdf_text(data: bytes):
+    reader = PdfReader(BytesIO(data))
+    pages = [page.extract_text() or "" for page in reader.pages]
+    return "\n\n".join(pages).strip()
 
 
 @app.post("/api/extract-pdf")
@@ -302,27 +338,29 @@ async def extract_pdf(file: UploadFile = File(...)):
     data = await file.read()
 
     if len(data) > MAX_LAYOUT_PDF_MB * 1024 * 1024:
-        raise HTTPException(status_code=400, detail=f"PDF is too large. Keep it under {MAX_LAYOUT_PDF_MB} MB.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"PDF is too large. Keep it under {MAX_LAYOUT_PDF_MB} MB.",
+        )
 
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded PDF is empty.")
 
     client = get_pdf_client()
 
-    # First try local extraction because it is faster and free of an AI call
-    # for normal text PDFs. If there is no useful text, Gemini handles scanned
-    # and image-based PDFs using native document understanding.
     try:
-        reader = PdfReader(BytesIO(data))
-        pages = []
-        for page in reader.pages:
-            pages.append(page.extract_text() or "")
-        text = "\n\n".join(pages).strip()
+        text = await asyncio.to_thread(extract_selectable_pdf_text, data)
     except Exception as exc:
+        logger.exception("Could not extract local PDF text")
         raise HTTPException(status_code=400, detail=f"Could not read this PDF: {exc}") from exc
 
     if text:
         if len(text) > MAX_CHARS:
+            logger.warning(
+                "PDF text for %s exceeded MAX_CHARS=%d; returning truncated text",
+                file.filename,
+                MAX_CHARS,
+            )
             text = text[:MAX_CHARS]
             truncated = True
         else:
@@ -336,30 +374,34 @@ async def extract_pdf(file: UploadFile = File(...)):
             "method": "pdf-text",
         }
 
-    # No selectable text: Gemini must receive the actual PDF, so the native
-    # Gemini PDF limit still applies to this scanned-PDF fallback.
-    if len(data) > 50 * 1024 * 1024:
+    if len(data) > SCANNED_PDF_GEMINI_MB * 1024 * 1024:
         raise HTTPException(
             status_code=400,
             detail=(
-                "This PDF is over 50 MB and has no selectable text. "
+                f"This PDF is over {SCANNED_PDF_GEMINI_MB} MB and has no selectable text. "
                 "The layout-preserving translator works locally with large text PDFs, "
                 "but Gemini's native PDF understanding is limited to 50 MB for scanned PDFs."
             ),
         )
 
     try:
-        text, used_model = extract_pdf_with_gemini(client, data)
+        text, used_model = await extract_pdf_with_gemini(client, data)
     except Exception as exc:
+        logger.exception("AI PDF extraction failed")
         raise HTTPException(
             status_code=502,
-            detail=f"AI PDF extraction failed after trying {len(MODEL_LIST)} model(s): {exc}",
+            detail=f"AI PDF extraction failed after trying {len(PDF_MODELS)} model(s): {exc}",
         ) from exc
 
     if not text:
         raise HTTPException(status_code=422, detail="No readable curriculum text was found in the PDF.")
 
     if len(text) > MAX_CHARS:
+        logger.warning(
+            "Gemini-extracted PDF text for %s exceeded MAX_CHARS=%d; returning truncated text",
+            file.filename,
+            MAX_CHARS,
+        )
         text = text[:MAX_CHARS]
         truncated = True
     else:
@@ -385,10 +427,9 @@ class TranslatedBlocks(BaseModel):
 
 
 def extract_layout_blocks(pdf_data: bytes):
-    """Extract selectable text blocks with their original page rectangles and basic styling."""
+    """Extract selectable text blocks with original page rectangles and basic styling."""
     doc = pymupdf.open(stream=pdf_data, filetype="pdf")
     pages = []
-    total_chars = 0
 
     try:
         for page_number, page in enumerate(doc):
@@ -440,7 +481,6 @@ def extract_layout_blocks(pdf_data: bytes):
                         "color": color_hex,
                     }
                 )
-                total_chars += len(text)
 
             pages.append(page_blocks)
 
@@ -455,6 +495,7 @@ def extract_layout_blocks(pdf_data: bytes):
 
         return doc, pages
     except Exception:
+        logger.exception("PyMuPDF layout extraction failed")
         doc.close()
         raise
 
@@ -494,8 +535,6 @@ def split_layout_batches(blocks):
             current = []
             current_chars = 0
 
-        # A single giant block gets its own batch. It is better to preserve the
-        # block than to split it and risk breaking the PDF's structure.
         current.append(block)
         current_chars += size
 
@@ -525,29 +564,17 @@ def validate_translated_batch(batch, response_text):
 
 
 async def translate_batch_with_fallback(client, batch, target_language: str):
-    """
-    Worker logic: every batch uses the same model fallback chain.
-
-    Model 1 -> retry -> Model 2 -> retry -> Model 3 -> retry -> Model 4.
-    No model is permanently assigned to a batch.
-    """
+    """Translate one batch through the configured PDF model fallback chain."""
     prompt = build_layout_translation_prompt(batch, target_language)
     last_errors = []
 
     for model in PDF_MODELS:
-        thinking_level = (
-            "minimal"
-            if model in {"gemini-3.5-flash-lite", "gemini-3.6-flash"}
-            else "low"
-        )
         config = types.GenerateContentConfig(
-            # Translation does not need deep reasoning; keep latency low.
             thinking_config=types.ThinkingConfig(
-                thinking_level=thinking_level
+                thinking_level=get_thinking_level(model)
             ),
             response_mime_type="application/json",
             response_schema=TranslatedBlocks,
-            # Leave enough room for languages that expand the source text.
             max_output_tokens=20000,
         )
 
@@ -570,17 +597,19 @@ async def translate_batch_with_fallback(client, batch, target_language: str):
 
             except Exception as exc:
                 last_errors.append(f"{model} attempt {attempt + 1}: {exc}")
+                logger.warning(
+                    "PDF translation batch failed: %s attempt %d: %s",
+                    model,
+                    attempt + 1,
+                    exc,
+                )
 
                 if not is_retryable_model_error(exc) and not isinstance(exc, ValueError):
-                    # A non-transient request/config error should not waste all
-                    # fallback models, but the brain can still requeue the batch.
                     break
 
                 if attempt < LAYOUT_MODEL_RETRIES - 1:
                     delay = min(30, 1.5 * (2 ** attempt) + random.uniform(0, 0.75))
                     await asyncio.sleep(delay)
-
-        # Move to the next model after this model has exhausted its retries.
 
     raise RuntimeError(
         "All configured Gemini fallback models failed for this batch. "
@@ -642,38 +671,83 @@ async def translate_layout_blocks(client: genai.Client, blocks, target_language:
                 )
 
             translated, used_model = result
+            logger.info(
+                "Translated PDF batch %d/%d with %s",
+                batch_index + 1,
+                total_batches,
+                used_model,
+            )
             completed[batch_index] = translated
 
-        # Give failed batches a small backoff before the next brain cycle.
         if pending:
             await asyncio.sleep(1.0)
 
-    # Reassemble strictly by original batch order. IDs are still validated
-    # inside every batch, so page/block order cannot drift.
     translated_by_id = {}
     for batch_index in range(total_batches):
         translated_by_id.update(completed[batch_index])
 
     return translated_by_id
 
+
 def block_html(text: str) -> str:
     safe = html_escape(text, quote=False)
-    safe = safe.replace("\n", "<br>")
-    return safe
+    return safe.replace("\n", "<br>")
 
 
-def apply_layout_translations(doc, pages, translated_by_id):
-    """Remove only original text and place translated text back into the same rectangles."""
+def get_font_resources(target_language: str):
+    filename, family = FONT_FILES[target_language]
+    font_path = FONT_DIR / filename
+
+    if not font_path.is_file():
+        raise RuntimeError(
+            f"Bundled font is missing: {font_path}. "
+            "Run the font setup instructions in README.md."
+        )
+
+    archive = pymupdf.Archive(str(FONT_DIR))
+    css = f"""
+@font-face {{
+    font-family: "{family}";
+    src: url("{filename}");
+    font-weight: 100 900;
+    font-style: normal;
+}}
+* {{
+    font-family: "{family}";
+}}
+""".strip()
+    return archive, css
+
+
+def apply_layout_translations(doc, pages, translated_by_id, target_language: str):
+    """Replace original text while preserving graphics and using the target script font."""
+    archive, font_css = get_font_resources(target_language)
+
     for page_number, blocks in enumerate(pages):
         page = doc[page_number]
 
-        # Remove text only. Images and vector graphics are deliberately preserved.
         for block in blocks:
+            rect = block["rect"]
+
+            # Inset redaction by ~0.5pt to reduce the chance of erasing nearby
+            # text that happens to touch a block rectangle. This is still
+            # approximate because PDF text boxes can overlap other content.
+            if rect.width > 1.0 and rect.height > 1.0:
+                redact_rect = pymupdf.Rect(
+                    rect.x0 + 0.5,
+                    rect.y0 + 0.5,
+                    rect.x1 - 0.5,
+                    rect.y1 - 0.5,
+                )
+            else:
+                redact_rect = rect
+
             page.add_redact_annot(
-                block["rect"],
+                redact_rect,
                 fill=False,
                 cross_out=False,
             )
+
         page.apply_redactions(
             images=pymupdf.PDF_REDACT_IMAGE_NONE,
             graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
@@ -687,28 +761,62 @@ def apply_layout_translations(doc, pages, translated_by_id):
 
             font_weight = "bold" if block["bold"] else "normal"
             font_style = "italic" if block["italic"] else "normal"
-            css = (
-                "* {"
-                "font-family: sans-serif;"
-                f"font-size: {block['font_size']:.2f}pt;"
-                f"font-weight: {font_weight};"
-                f"font-style: {font_style};"
-                f"color: {block['color']};"
-                "margin: 0;"
-                "padding: 0;"
-                "line-height: 1.15;"
-                "}"
-            )
+            base_size = block["font_size"]
 
-            page.insert_htmlbox(
-                block["rect"],
-                block_html(translated),
-                css=css,
-                scale_low=0,
-                overlay=True,
-            )
+            inserted = False
+            for attempt in range(3):
+                font_size = base_size * (0.9 ** attempt)
+                css = (
+                    f'{font_css}\n'
+                    f'* {{ font-size: {font_size:.2f}pt; '
+                    f'font-weight: {font_weight}; '
+                    f'font-style: {font_style}; '
+                    f'color: {block["color"]}; '
+                    "margin: 0; padding: 0; line-height: 1.15; }"
+                )
+
+                try:
+                    result = page.insert_htmlbox(
+                        block["rect"],
+                        block_html(translated),
+                        css=css,
+                        archive=archive,
+                        scale_low=1,
+                        overlay=True,
+                    )
+
+                    if result[0] >= 0:
+                        inserted = True
+                        break
+
+                    logger.warning(
+                        "Translated block %s did not fit at %.1f%% font size; retrying",
+                        block["id"],
+                        (0.9 ** attempt) * 100,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Could not insert translated block %s on page %d at attempt %d: %s",
+                        block["id"],
+                        page_number + 1,
+                        attempt + 1,
+                        exc,
+                    )
+
+            if not inserted:
+                logger.error(
+                    "Skipping translated block %s on page %d after 3 insertion attempts",
+                    block["id"],
+                    page_number + 1,
+                )
 
     return doc
+
+
+def save_pdf_bytes(doc) -> bytes:
+    output = BytesIO()
+    doc.save(output, garbage=4, deflate=True)
+    return output.getvalue()
 
 
 @app.post("/api/translate-pdf")
@@ -719,8 +827,7 @@ async def translate_pdf(
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a PDF file.")
 
-    if target_language not in ALLOWED_LANGUAGES:
-        raise HTTPException(status_code=400, detail="Unsupported target language.")
+    validate_target_language(target_language)
 
     data = await file.read()
     if not data:
@@ -733,7 +840,18 @@ async def translate_pdf(
         )
 
     client = get_pdf_client()
-    doc, pages = extract_layout_blocks(data)
+
+    try:
+        doc, pages = await asyncio.to_thread(extract_layout_blocks, data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Could not parse PDF layout")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read this PDF: {exc}",
+        ) from exc
+
     all_blocks = [block for page_blocks in pages for block in page_blocks]
 
     try:
@@ -742,24 +860,38 @@ async def translate_pdf(
             all_blocks,
             target_language,
         )
-        apply_layout_translations(doc, pages, translated_by_id)
 
-        output = BytesIO()
-        doc.save(output, garbage=4, deflate=True)
-        pdf_bytes = output.getvalue()
+        await asyncio.to_thread(
+            apply_layout_translations,
+            doc,
+            pages,
+            translated_by_id,
+            target_language,
+        )
+
+        pdf_bytes = await asyncio.to_thread(save_pdf_bytes, doc)
+
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Could not build the translated PDF")
         raise HTTPException(
             status_code=500,
             detail=f"Could not build the translated PDF: {exc}",
         ) from exc
     finally:
-        doc.close()
+        await asyncio.to_thread(doc.close)
 
     original_name = re.sub(r"[^A-Za-z0-9._-]+", "-", file.filename)
-    base_name = re.sub(r"\.pdf$", "", original_name, flags=re.IGNORECASE).strip("-") or "curriculum"
-    safe_language = re.sub(r"[^A-Za-z0-9]+", "-", target_language.lower()).strip("-")
+    base_name = (
+        re.sub(r"\.pdf$", "", original_name, flags=re.IGNORECASE).strip("-")
+        or "curriculum"
+    )
+    safe_language = re.sub(
+        r"[^A-Za-z0-9]+",
+        "-",
+        target_language.lower(),
+    ).strip("-")
     download_name = f"{base_name}-{safe_language}-translated.pdf"
 
     return StreamingResponse(
@@ -775,10 +907,7 @@ async def translate_pdf(
     )
 
 
-IMAGE_MODELS = [
-    model for model in PDF_MODELS
-    if "flash" in model.lower() and "image" not in model.lower()
-] or PDF_MODELS
+IMAGE_MODELS = PDF_MODELS
 
 
 def normalize_image_mime(file: UploadFile) -> str:
@@ -815,6 +944,19 @@ def normalize_image_mime(file: UploadFile) -> str:
     return ""
 
 
+def validate_image_bytes(data: bytes):
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        image = Image.open(BytesIO(data))
+        image.verify()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is not a valid readable image.",
+        ) from exc
+
+
 @app.post("/api/extract-image")
 async def extract_image(file: UploadFile = File(...)):
     mime_type = normalize_image_mime(file)
@@ -831,18 +973,7 @@ async def extract_image(file: UploadFile = File(...)):
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Image is too large. Keep it under 10 MB.")
 
-    # Validate that the uploaded bytes are actually an image. This catches
-    # mislabeled files before sending them to Gemini.
-    try:
-        from PIL import Image, UnidentifiedImageError
-
-        image = Image.open(BytesIO(data))
-        image.verify()
-    except (UnidentifiedImageError, OSError) as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="The uploaded file is not a valid readable image.",
-        ) from exc
+    await asyncio.to_thread(validate_image_bytes, data)
 
     client = get_pdf_client()
 
@@ -865,27 +996,37 @@ Rules:
     errors = []
     for model in IMAGE_MODELS:
         try:
-            response = client.models.generate_content(
+            config = types.GenerateContentConfig()
+            response = await client.aio.models.generate_content(
                 model=model,
                 contents=[
                     types.Part.from_bytes(data=data, mime_type=mime_type),
                     prompt,
                 ],
-                config=types.GenerateContentConfig(temperature=0),
+                config=config,
             )
             text = (response.text or "").strip()
+
             if text:
                 if len(text) > MAX_CHARS:
+                    logger.warning(
+                        "Image OCR output exceeded MAX_CHARS=%d; truncating response",
+                        MAX_CHARS,
+                    )
                     text = text[:MAX_CHARS]
+
                 return {
                     "filename": file.filename,
                     "text": text,
                     "characters": len(text),
                     "model": model,
                 }
+
             errors.append(f"{model}: empty response")
         except Exception as exc:
             errors.append(f"{model}: {exc}")
+            logger.warning("Image OCR failed with %s: %s", model, exc)
+
             if not is_retryable_model_error(exc):
                 raise HTTPException(
                     status_code=502,
