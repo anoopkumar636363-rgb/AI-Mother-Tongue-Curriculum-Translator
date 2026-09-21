@@ -161,44 +161,27 @@ async def translate_text(
     prompt = build_translation_prompt(text, target_language)
     config = types.GenerateContentConfig(temperature=0.2)
 
-    def stream_translation():
-        errors = []
+    try:
+        response, used_model = generate_with_fallback(
+            client,
+            prompt,
+            config=config,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Translation failed after trying {len(MODEL_LIST)} model(s): {exc}",
+        ) from exc
 
-        for model in MODEL_LIST:
-            try:
-                stream = client.models.generate_content_stream(
-                    model=model,
-                    contents=prompt,
-                    config=config,
-                )
+    translated_text = (response.text or "").strip()
 
-                sent = False
-                for chunk in stream:
-                    chunk_text = chunk.text or ""
-                    if chunk_text:
-                        sent = True
-                        yield chunk_text
+    if not translated_text:
+        raise HTTPException(status_code=502, detail="The AI returned an empty translation.")
 
-                if sent:
-                    return
-
-                errors.append(f"{model}: empty response")
-
-            except Exception as exc:
-                errors.append(f"{model}: {exc}")
-                if not is_retryable_model_error(exc):
-                    break
-
-        raise RuntimeError("Streaming translation failed. Tried: " + " | ".join(errors))
-
-    return StreamingResponse(
-        stream_translation(),
-        media_type="text/plain; charset=utf-8",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return {
+        "text": translated_text,
+        "model": used_model,
+    }
 
 
 PDF_EXTRACTION_PROMPT = """
