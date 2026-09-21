@@ -53,6 +53,7 @@
               <span>📷 Scan / Image</span>
             </label>
             <button id="translatePdfBtn" class="ghost-btn pdf-translate-btn" disabled>Translate PDF ↔ Keep Layout</button>
+            <button id="addGlossaryQuickBtn" class="ghost-btn">Add to glossary</button>
             <button id="clearBtn" class="ghost-btn">Clear</button>
           </div>
 
@@ -115,6 +116,10 @@
           <label for="grade">Grade <span>(optional)</span></label>
           <input id="grade" type="text" placeholder="e.g. Grade 10" maxlength="50" />
         </div>
+        <label class="checkbox-field">
+          <input id="useGlossary" type="checkbox" checked />
+          <span>Use glossary</span>
+        </label>
         <div class="field small-field save-title-field">
           <label for="saveTitle">Library title <span>(used when saving)</span></label>
           <input id="saveTitle" type="text" maxlength="200" placeholder="Auto-filled after translation" />
@@ -137,6 +142,7 @@
       </div>
 
       <div id="notice" class="notice hidden"></div>
+      <div id="glossaryStatus" class="glossary-status hidden" aria-live="polite"></div>
     </section>
 
         <section id="libraryView" class="view library-view card hidden">
@@ -287,6 +293,92 @@
       </div>
     </section>
 
+    
+
+    <section id="glossaryView" class="view glossary-view card hidden">
+      <div class="glossary-head">
+        <div>
+          <div class="badge">✦ TECHNICAL TERMINOLOGY</div>
+          <h2>Translation Glossary</h2>
+          <p>Keep important curriculum terms consistent across translations.</p>
+        </div>
+        <div class="glossary-actions">
+          <button id="glossaryImportBtn" class="ghost-btn">Import CSV</button>
+          <input id="glossaryImportInput" type="file" accept=".csv,text/csv" class="hidden" />
+          <button id="glossaryExportBtn" class="ghost-btn">Export CSV</button>
+          <a id="glossaryTemplateLink" class="ghost-btn glossary-link" href="#">Download CSV template</a>
+        </div>
+      </div>
+
+      <div id="glossaryError" class="library-error hidden"></div>
+      <div id="glossaryImportSummary" class="glossary-import-summary hidden"></div>
+
+      <div class="glossary-toolbar">
+        <select id="glossaryLanguageFilter"><option value="">All languages</option></select>
+        <select id="glossarySubjectFilter"><option value="">All subjects</option></select>
+        <input id="glossarySearch" type="search" maxlength="200" placeholder="Search source or translated term..." />
+        <button id="glossarySearchBtn" class="ghost-btn">Search</button>
+      </div>
+
+      <div class="glossary-table-wrap">
+        <table class="glossary-table">
+          <thead>
+            <tr>
+              <th>Source term</th>
+              <th>Language</th>
+              <th>Translated term</th>
+              <th>Subject</th>
+              <th>Notes</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="glossaryBody"></tbody>
+        </table>
+      </div>
+      <div id="glossaryEmpty" class="empty-dashboard hidden">No glossary terms yet</div>
+
+      <div class="pager">
+        <button id="glossaryPrev" class="ghost-btn">← Previous</button>
+        <span id="glossaryPageLabel">Page 1</span>
+        <button id="glossaryNext" class="ghost-btn">Next →</button>
+      </div>
+
+      <div class="glossary-form-card">
+        <div class="glossary-form-head">
+          <div>
+            <h3 id="glossaryFormTitle">Add term</h3>
+            <p>Terms can be global or limited to one subject.</p>
+          </div>
+          <button id="glossaryCancelBtn" class="ghost-btn hidden">Cancel edit</button>
+        </div>
+        <div class="glossary-form-grid">
+          <div class="field">
+            <label for="glossarySource">Source term</label>
+            <input id="glossarySource" type="text" maxlength="200" placeholder="e.g. transistor" />
+          </div>
+          <div class="field">
+            <label for="glossaryTargetLanguage">Target language</label>
+            <select id="glossaryTargetLanguage"></select>
+          </div>
+          <div class="field">
+            <label for="glossaryTranslated">Translated term</label>
+            <input id="glossaryTranslated" type="text" maxlength="200" placeholder="Exact translated term" />
+          </div>
+          <div class="field">
+            <label for="glossarySubject">Subject <span>(optional)</span></label>
+            <input id="glossarySubject" type="text" maxlength="100" placeholder="e.g. Electrical Engineering" />
+          </div>
+          <div class="field glossary-notes-field">
+            <label for="glossaryNotes">Notes <span>(optional)</span></label>
+            <textarea id="glossaryNotes" maxlength="500" rows="3" placeholder="Usage or teacher notes"></textarea>
+          </div>
+        </div>
+        <div class="glossary-form-actions">
+          <button id="glossarySaveBtn" class="translate-btn">Add term →</button>
+        </div>
+      </div>
+    </section>
+
     <section id="dashboardView" class="view dashboard-view card hidden">
       <div class="dashboard-head">
         <div>
@@ -326,11 +418,17 @@
           <div class="stat-card"><span>Average time</span><strong id="statAvg">0 ms</strong></div>
           <div class="stat-card" id="statSavedCard"><span>Saved materials</span><strong id="statSaved">0</strong></div>
           <div class="stat-card"><span>Glossary terms</span><strong id="statGlossary">0</strong></div>
+          <div class="stat-card"><span>Glossary terms</span><strong id="statGlossary">0</strong></div>
         </div>
 
         <div class="chart-grid">
           <div class="chart-card"><h3>Translations by language</h3><canvas id="languageChart" aria-label="Translations per language"></canvas></div>
           <div class="chart-card"><h3>Translations per day</h3><canvas id="dailyChart"></canvas></div>
+        </div>
+
+        <div class="chart-card source-card">
+          <h3>Glossary terms by language</h3>
+          <div id="glossaryLanguageBreakdown" class="source-breakdown"></div>
         </div>
 
         <div class="chart-card source-card">
