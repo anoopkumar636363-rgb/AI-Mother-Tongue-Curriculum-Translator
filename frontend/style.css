@@ -101,6 +101,8 @@ h2 { margin: 0; font-size: 16px; }
   cursor: pointer;
 }
 .upload-btn:hover, .ghost-btn:hover { background: rgba(255,255,255,.07); }
+.ghost-btn:disabled { opacity: .45; cursor: not-allowed; }
+.pdf-translate-btn { border-color: rgba(117,100,255,.35); }
 .upload-btn input { display: none; }
 .output-actions { display: flex; gap: 8px; align-items: center; }
 
