@@ -1,0 +1,70 @@
+name: Bundle Noto Sans fonts
+
+on:
+  push:
+    paths:
+      - "backend/main.py"
+      - ".github/workflows/bundle-fonts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle-fonts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download bundled Noto Sans fonts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p backend/fonts
+
+          declare -A FONT_URLS=(
+            [NotoSans.ttf]="https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
+            [NotoSansKannada.ttf]="https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf"
+            [NotoSansDevanagari.ttf]="https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
+            [NotoSansTelugu.ttf]="https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf"
+            [NotoSansTamil.ttf]="https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf"
+            [NotoSansMalayalam.ttf]="https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Regular.ttf"
+            [NotoSansBengali.ttf]="https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSansBengali/NotoSansBengali-Regular.ttf"
+            [NotoSansGujarati.ttf]="https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSansGujarati/NotoSansGujarati-Regular.ttf"
+            [NotoSansGurmukhi.ttf]="https://raw.githubusercontent.com/notofonts/noto-fonts/main/hinted/ttf/NotoSansGurmukhi/NotoSansGurmukhi-Regular.ttf"
+          )
+
+          missing=0
+          for font in "${!FONT_URLS[@]}"; do
+            if [ ! -s "backend/fonts/$font" ]; then
+              echo "Downloading $font"
+              curl --fail --location --retry 3 "${FONT_URLS[$font]}" -o "backend/fonts/$font"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -eq 0 ]; then
+            echo "All bundled fonts already exist."
+            exit 0
+          fi
+
+          cat > backend/fonts/README.md <<'EOF'
+          # Bundled Noto Sans fonts
+
+          These regular-weight Noto Sans fonts are bundled for PDF layout reconstruction.
+          The backend maps each target language to its script-specific font.
+
+          Sources:
+          - https://github.com/notofonts/noto-fonts
+          - https://notofonts.github.io/
+
+          Noto fonts are distributed under the SIL Open Font License. See the font metadata
+          and repository license for the exact licensing terms.
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/fonts
+          git commit -m "Bundle Noto Sans script fonts"
+          git push
