@@ -18,11 +18,20 @@ from pydantic import BaseModel
 
 load_dotenv(override=True)
 
-# Read the key from .env even if an older GEMINI_API_KEY exists in the shell.
-API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
+# Separate Gemini API keys keep PDF/OCR traffic and normal translation traffic
+# in separate quota buckets when the keys belong to separate projects.
+# Both fall back to GEMINI_API_KEY so the app still works with one key.
+TRANSLATION_API_KEY = (
+    os.getenv("GEMINI_TRANSLATION_API_KEY")
+    or os.getenv("GEMINI_API_KEY")
+    or ""
+).strip()
+PDF_API_KEY = (
+    os.getenv("GEMINI_PDF_API_KEY")
+    or os.getenv("GEMINI_API_KEY")
+    or ""
+).strip()
 
-# The app tries these models in order. If one is unavailable or temporarily
-# rate-limited, it automatically tries the next one.
 DEFAULT_MODELS = [
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
@@ -32,6 +41,14 @@ DEFAULT_MODELS = [
 MODEL_LIST = [
     model.strip()
     for model in os.getenv("GEMINI_MODELS", ",".join(DEFAULT_MODELS)).split(",")
+    if model.strip()
+]
+PDF_MODELS = [
+    model.strip()
+    for model in os.getenv(
+        "GEMINI_PDF_MODELS",
+        "gemini-3.8-flash,gemini-3.7-flash",
+    ).split(",")
     if model.strip()
 ]
 MAX_CHARS = 30000
@@ -67,13 +84,22 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 
-def get_client() -> genai.Client:
-    if not API_KEY:
+def get_translation_client() -> genai.Client:
+    if not TRANSLATION_API_KEY:
         raise HTTPException(
             status_code=500,
-            detail="GEMINI_API_KEY is missing. Add it to your .env file.",
+            detail="Translation Gemini API key is missing. Add GEMINI_TRANSLATION_API_KEY or GEMINI_API_KEY to your .env file.",
         )
-    return genai.Client(api_key=API_KEY)
+    return genai.Client(api_key=TRANSLATION_API_KEY)
+
+
+def get_pdf_client() -> genai.Client:
+    if not PDF_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="PDF Gemini API key is missing. Add GEMINI_PDF_API_KEY or GEMINI_API_KEY to your .env file.",
+        )
+    return genai.Client(api_key=PDF_API_KEY)
 
 
 def is_retryable_model_error(exc: Exception) -> bool:
@@ -174,7 +200,7 @@ async def translate_text(
             detail=f"Text is too long for the prototype. Keep it under {MAX_CHARS:,} characters.",
         )
 
-    client = get_client()
+    client = get_translation_client()
     prompt = build_translation_prompt(text, target_language)
     # Translation does not need deep reasoning. Gemini documents
     # "minimal" as the latency-optimized level for simple requests.
@@ -241,19 +267,27 @@ Requirements:
 
 
 def extract_pdf_with_gemini(client: genai.Client, data: bytes):
-    """Use Gemini's native PDF understanding so scanned PDFs also work."""
+    """Use the dedicated PDF Gemini key/model pool for scanned PDFs."""
     uploaded_file = client.files.upload(
         file=BytesIO(data),
         config={"mime_type": "application/pdf"},
     )
 
     try:
-        response, used_model = generate_with_fallback(
-            client,
-            [PDF_EXTRACTION_PROMPT, uploaded_file],
-            config=types.GenerateContentConfig(temperature=0),
-        )
-        return (response.text or "").strip(), used_model
+        errors = []
+        for model in PDF_MODELS:
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[PDF_EXTRACTION_PROMPT, uploaded_file],
+                    config=types.GenerateContentConfig(temperature=0),
+                )
+                return (response.text or "").strip(), model
+            except Exception as exc:
+                errors.append(f"{model}: {exc}")
+                if not is_retryable_model_error(exc):
+                    raise
+        raise RuntimeError("PDF extraction models failed: " + " | ".join(errors))
     except Exception:
         # The Gemini Files API keeps uploads temporarily; the backend does not
         # need to persist the uploaded PDF locally.
@@ -273,7 +307,7 @@ async def extract_pdf(file: UploadFile = File(...)):
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded PDF is empty.")
 
-    client = get_client()
+    client = get_pdf_client()
 
     # First try local extraction because it is faster and free of an AI call
     # for normal text PDFs. If there is no useful text, Gemini handles scanned
@@ -500,7 +534,7 @@ async def translate_batch_with_fallback(client, batch, target_language: str):
     prompt = build_layout_translation_prompt(batch, target_language)
     last_errors = []
 
-    for model in MODEL_LIST:
+    for model in PDF_MODELS:
         thinking_level = (
             "minimal"
             if model in {"gemini-3.5-flash-lite", "gemini-3.6-flash"}
@@ -694,7 +728,7 @@ async def translate_pdf(
             detail=f"PDF is too large. Keep it under {MAX_LAYOUT_PDF_MB} MB.",
         )
 
-    client = get_client()
+    client = get_pdf_client()
     doc, pages = extract_layout_blocks(data)
     all_blocks = [block for page_blocks in pages for block in page_blocks]
 
@@ -738,9 +772,9 @@ async def translate_pdf(
 
 
 IMAGE_MODELS = [
-    model for model in MODEL_LIST
+    model for model in PDF_MODELS
     if "flash" in model.lower() and "image" not in model.lower()
-] or MODEL_LIST
+] or PDF_MODELS
 
 
 def normalize_image_mime(file: UploadFile) -> str:
@@ -806,7 +840,7 @@ async def extract_image(file: UploadFile = File(...)):
             detail="The uploaded file is not a valid readable image.",
         ) from exc
 
-    client = get_client()
+    client = get_pdf_client()
 
     prompt = """
 You are an OCR engine for educational curriculum.
