@@ -102,6 +102,7 @@ h2 { margin: 0; font-size: 16px; }
 }
 .upload-btn:hover, .ghost-btn:hover { background: rgba(255,255,255,.07); }
 .upload-btn input { display: none; }
+.output-actions { display: flex; gap: 8px; align-items: center; }
 
 textarea {
   width: 100%;
