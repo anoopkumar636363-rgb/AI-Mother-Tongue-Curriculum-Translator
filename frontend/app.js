@@ -854,6 +854,171 @@ saveBtn.addEventListener("click", async () => {
   }
 });
 
+
+// Translation glossary
+const glossaryView = document.getElementById("glossaryView");
+const glossaryLanguageFilter = document.getElementById("glossaryLanguageFilter");
+const glossarySubjectFilter = document.getElementById("glossarySubjectFilter");
+const glossarySearch = document.getElementById("glossarySearch");
+const glossarySearchBtn = document.getElementById("glossarySearchBtn");
+const glossaryBody = document.getElementById("glossaryBody");
+const glossaryEmpty = document.getElementById("glossaryEmpty");
+const glossaryPrev = document.getElementById("glossaryPrev");
+const glossaryNext = document.getElementById("glossaryNext");
+const glossaryPageLabel = document.getElementById("glossaryPageLabel");
+const glossaryForm = document.getElementById("glossaryForm");
+const glossaryEditId = document.getElementById("glossaryEditId");
+const glossaryFormTitle = document.getElementById("glossaryFormTitle");
+const glossarySource = document.getElementById("glossarySource");
+const glossaryTargetLanguage = document.getElementById("glossaryTargetLanguage");
+const glossaryTranslated = document.getElementById("glossaryTranslated");
+const glossarySubjectInput = document.getElementById("glossarySubject");
+const glossaryNotes = document.getElementById("glossaryNotes");
+const glossarySaveBtn = document.getElementById("glossarySaveBtn");
+const glossaryCancelBtn = document.getElementById("glossaryCancelBtn");
+
+let glossaryPage = 1;
+let glossaryTotalPages = 0;
+
+async function glossaryRequest(url, options = {}) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "Glossary request failed.");
+  return data;
+}
+
+function setGlossaryError(message) {
+  const el = document.getElementById("glossaryError");
+  if (!el) return;
+  el.textContent = message;
+  el.classList.toggle("hidden", !message);
+}
+
+function loadGlossarySubjects(items) {
+  const current = glossarySubjectFilter.value;
+  glossarySubjectFilter.innerHTML = '<option value="">All subjects</option>';
+  const values = [...new Set(items.map(item => item.subject).filter(Boolean))].sort((a,b) => a.localeCompare(b));
+  values.forEach(value => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    glossarySubjectFilter.appendChild(option);
+  });
+  if (values.includes(current)) glossarySubjectFilter.value = current;
+}
+
+async function loadGlossary() {
+  setGlossaryError("");
+  try {
+    const params = new URLSearchParams({
+      language: glossaryLanguageFilter.value,
+      subject: glossarySubjectFilter.value
+    });
+    const data = await glossaryRequest("/api/glossary?" + params.toString());
+    const items = data.items || [];
+    glossaryBody.replaceChildren();
+    glossaryEmpty.classList.toggle("hidden", items.length !== 0);
+    items.forEach(item => {
+      const tr = document.createElement("tr");
+      [item.source_term, item.target_language, item.translated_term, item.subject || "—", item.notes || "—"].forEach(value => {
+        const td = document.createElement("td");
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+      const actions = document.createElement("td");
+      actions.className = "glossary-actions-cell";
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "glossary-small-btn";
+      edit.textContent = "Edit";
+      edit.addEventListener("click", () => startGlossaryEdit(item));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "glossary-small-btn danger-btn";
+      remove.textContent = "Delete";
+      remove.addEventListener("click", () => deleteGlossary(item.id));
+      actions.append(edit, remove);
+      tr.appendChild(actions);
+      glossaryBody.appendChild(tr);
+    });
+    glossaryTotalPages = 1;
+    glossaryPageLabel.textContent = items.length ? "Page 1 of 1" : "No pages";
+    glossaryPrev.disabled = true;
+    glossaryNext.disabled = true;
+
+    const allData = await glossaryRequest("/api/glossary");
+    loadGlossarySubjects(allData.items || []);
+  } catch (err) {
+    setGlossaryError(err.message);
+  }
+}
+
+function resetGlossaryForm() {
+  glossaryEditId.value = "";
+  glossarySource.value = "";
+  glossaryTranslated.value = "";
+  glossarySubjectInput.value = "";
+  glossaryNotes.value = "";
+  glossaryFormTitle.textContent = "Add term";
+  glossarySaveBtn.textContent = "Save term →";
+  glossaryCancelBtn.classList.add("hidden");
+}
+
+function startGlossaryEdit(item) {
+  glossaryEditId.value = item.id;
+  glossarySource.value = item.source_term;
+  glossaryTargetLanguage.value = item.target_language;
+  glossaryTranslated.value = item.translated_term;
+  glossarySubjectInput.value = item.subject || "";
+  glossaryNotes.value = item.notes || "";
+  glossaryFormTitle.textContent = "Edit term";
+  glossarySaveBtn.textContent = "Save changes →";
+  glossaryCancelBtn.classList.remove("hidden");
+  glossarySource.focus();
+}
+
+async function deleteGlossary(id) {
+  if (!window.confirm("Delete this glossary term?")) return;
+  try {
+    await glossaryRequest("/api/glossary/" + id, { method: "DELETE" });
+    await loadGlossary();
+    showNotice("Glossary term deleted.");
+  } catch (err) {
+    setGlossaryError(err.message);
+  }
+}
+
+glossaryForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  setGlossaryError("");
+  glossarySaveBtn.disabled = true;
+  try {
+    const payload = {
+      source_term: glossarySource.value.trim(),
+      target_language: glossaryTargetLanguage.value,
+      translated_term: glossaryTranslated.value.trim(),
+      subject: glossarySubjectInput.value.trim(),
+      notes: glossaryNotes.value.trim()
+    };
+    const id = glossaryEditId.value;
+    const data = id
+      ? await glossaryRequest("/api/glossary/" + id, { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) })
+      : await glossaryRequest("/api/glossary", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) });
+    resetGlossaryForm();
+    await loadGlossary();
+    showNotice(id ? "Glossary term updated." : "Glossary term added.");
+  } catch (err) {
+    setGlossaryError(err.message);
+  } finally {
+    glossarySaveBtn.disabled = false;
+  }
+});
+
+glossaryCancelBtn.addEventListener("click", resetGlossaryForm);
+glossarySearchBtn.addEventListener("click", () => loadGlossary());
+glossarySearch.addEventListener("keydown", event => { if (event.key === "Enter") loadGlossary(); });
+[glossaryLanguageFilter, glossarySubjectFilter].forEach(select => select.addEventListener("change", loadGlossary));
+
 // Admin login
 loginBtn.addEventListener("click", async () => {
   const password = adminPassword.value;
