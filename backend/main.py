@@ -4,7 +4,7 @@ from io import BytesIO
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
@@ -17,10 +17,10 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 # The app tries these models in order. If one is unavailable or temporarily
 # rate-limited, it automatically tries the next one.
 DEFAULT_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
     "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
 ]
 MODEL_LIST = [
     model.strip()
@@ -159,7 +159,9 @@ async def translate_text(
 
     client = get_client()
     prompt = build_translation_prompt(text, target_language)
-    config = types.GenerateContentConfig(temperature=0.2)
+    # Gemini 3.x no longer needs the legacy temperature setting here.
+    # Keeping the request minimal also avoids model-specific config errors.
+    config = None
 
     try:
         response, used_model = generate_with_fallback(
