@@ -76,6 +76,38 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_translations_created_at "
             "ON translations(created_at)"
         )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS glossary_terms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_term TEXT NOT NULL,
+                target_language TEXT NOT NULL,
+                translated_term TEXT NOT NULL,
+                subject TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        # SQLite does not allow expressions such as lower(source_term)
+        # inside a table-level UNIQUE constraint, so this unique index
+        # provides the requested case-insensitive uniqueness guarantee.
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_glossary_terms_source_language_subject
+            ON glossary_terms(lower(source_term), target_language, subject)
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_glossary_terms_target_language "
+            "ON glossary_terms(target_language)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_glossary_terms_subject "
+            "ON glossary_terms(subject)"
+        )
         conn.commit()
 
 
