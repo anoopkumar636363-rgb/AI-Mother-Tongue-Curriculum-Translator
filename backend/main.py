@@ -217,7 +217,7 @@ def build_translation_prompt(text: str, target_language: str, glossary_terms=Non
     glossary_block = ""
     if glossary_terms:
         glossary_lines = [
-            "GLOSSARY (mandatory): translate these terms EXACTLY as given and do not paraphrase:"
+            "GLOSSARY (mandatory): whenever the source term appears, write ONLY the translated term shown below. Never write the source term next to it or in brackets:"
         ]
         glossary_lines.extend(
             f"- {item['source_term']} -> {item['translated_term']}"
@@ -235,10 +235,10 @@ Rules:
 1. Preserve the original meaning and educational intent.
 2. Preserve headings, numbered lists, bullet points, examples, formulas, units, symbols, and paragraph structure.
 3. Use natural language appropriate for a student, not awkward word-for-word translation.
-4. Keep internationally standard scientific, mathematical, programming, and technical terms when translating them would reduce clarity.
+4. Translate ALL words into {target_language}, including technical and scientific terms, written in {target_language} script. Keep ONLY formulas, equations, numbers, units, symbols, code, URLs, variable names and proper names unchanged.
 5. Do not add facts that are not present in the source.
 6. Do not summarize or shorten the content.
-7. Return ONLY the translated curriculum. Do not add commentary.{glossary_section}
+7. Write the output ONLY in {target_language}. Do NOT include the original text, do NOT repeat the source word in brackets after a translated word, and do NOT give bilingual output. No commentary.{glossary_section}
 
 CURRICULUM:
 {text}
@@ -684,7 +684,7 @@ def build_layout_translation_prompt(blocks, target_language: str, glossary_terms
     glossary_block = ""
     if glossary_terms:
         glossary_lines = [
-            "GLOSSARY (mandatory): translate these terms EXACTLY as given and do not paraphrase:"
+            "GLOSSARY (mandatory): whenever the source term appears, write ONLY the translated term shown below. Never write the source term next to it or in brackets:"
         ]
         glossary_lines.extend(
             f"- {item['source_term']} -> {item['translated_term']}"
@@ -700,11 +700,10 @@ Translate every block while preserving the PDF's structure.
 Rules:
 1. Return exactly one object for every input block, using the same id.
 2. Translate only the human-language text.
-3. Preserve formulas, equations, numbers, units, symbols, code, URLs, variable names,
-   chemical notation, and standard technical terms when translating them would reduce clarity.
+3. Translate ALL words into {target_language}, including technical and scientific terms, written in {target_language} script. Keep ONLY formulas, equations, numbers, units, symbols, code, URLs, variable names and proper names unchanged.
 4. Preserve line breaks when they are meaningful to the source.
 5. Do not summarize, merge, split, reorder, or omit blocks.
-6. Do not add explanations or commentary.
+6. Write the output ONLY in {target_language}. Do NOT include the original text, do NOT repeat the source word in brackets after a translated word, and do NOT give bilingual output. No commentary.
 7. Use natural language appropriate for a student.{glossary_section}
 
 INPUT BLOCKS:
