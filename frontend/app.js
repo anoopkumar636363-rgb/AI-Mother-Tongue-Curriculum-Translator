@@ -33,6 +33,27 @@ function setOutput(text) {
   copyBtn.disabled = !text;
 }
 
+// Animate the completed backend response without changing its formatting.
+function animateTyping(fullText, element, delay = 8) {
+  return new Promise((resolve) => {
+    element.className = "output";
+    element.textContent = "";
+
+    let index = 0;
+
+    const interval = setInterval(() => {
+      if (index < fullText.length) {
+        element.textContent += fullText[index];
+        element.scrollTop = element.scrollHeight;
+        index++;
+      } else {
+        clearInterval(interval);
+        resolve();
+      }
+    }, delay);
+  });
+}
+
 sourceText.addEventListener("input", updateCount);
 
 clearBtn.addEventListener("click", () => {
@@ -104,48 +125,83 @@ translateBtn.addEventListener("click", async () => {
     showNotice("Add curriculum text, upload a PDF, or scan a page first.", true);
     return;
   }
+
   if (text.length > 30000) {
     showNotice("Please keep the curriculum under 30,000 characters for this demo.", true);
     return;
   }
 
   translateBtn.disabled = true;
-  translateBtn.querySelector("span").textContent = "Translating...";
+
+  const labelSpan = translateBtn.querySelector("span");
+  const originalLabel = labelSpan ? labelSpan.textContent : translateBtn.textContent;
+  if (labelSpan) {
+    labelSpan.textContent = "Translating...";
+  } else {
+    translateBtn.textContent = "Translating...";
+  }
+
   showNotice(`Translating into ${language.value}...`);
   output.className = "output";
   output.textContent = "AI is translating the curriculum...";
+  copyBtn.disabled = true;
 
   const form = new FormData();
   form.append("text", text);
   form.append("target_language", language.value);
 
   try {
-    const res = await fetch("/api/translate", { method: "POST", body: form });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Translation failed.");
+    const res = await fetch("/api/translate", {
+      method: "POST",
+      body: form
+    });
 
-    setOutput(data.translated_text);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.detail || "Translation failed.");
+    }
+
+    await animateTyping(data.translated_text, output, 8);
+
+    copyBtn.disabled = !data.translated_text;
     showNotice(`Translation complete • ${data.target_language}`);
   } catch (err) {
     output.className = "output empty";
-    output.innerHTML = '<div class="empty-icon">!</div><h3>Translation failed</h3><p>Check your API key and try again.</p>';
+    output.innerHTML = '<div class="empty-icon">!</div><h3>Translation failed</h3><p></p>';
+    output.querySelector("p").textContent = err.message;
     showNotice(err.message, true);
   } finally {
     translateBtn.disabled = false;
-    translateBtn.querySelector("span").textContent = "Translate with AI";
+
+    if (labelSpan) {
+      labelSpan.textContent = originalLabel;
+    } else {
+      translateBtn.textContent = originalLabel;
+    }
   }
 });
 
 copyBtn.addEventListener("click", async () => {
   const text = output.textContent.trim();
   if (!text) return;
-  await navigator.clipboard.writeText(text);
-  showNotice("Translation copied to clipboard.");
+
+  try {
+    await navigator.clipboard.writeText(text);
+    showNotice("Translation copied to clipboard.");
+  } catch {
+    showNotice("Could not copy the translation.", true);
+  }
 });
 
 fetch("/api/health")
   .then(r => r.json())
-  .then(data => { health.textContent = `● API ready • ${data.models.join(" → ")}`; })
-  .catch(() => { health.textContent = "● Start the FastAPI server"; });
+  .then(data => {
+    const models = Array.isArray(data.models) ? data.models.join(" → ") : "Gemini";
+    health.textContent = `● API ready • ${models}`;
+  })
+  .catch(() => {
+    health.textContent = "● Start the FastAPI server";
+  });
 
 updateCount();
