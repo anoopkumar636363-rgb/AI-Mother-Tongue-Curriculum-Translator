@@ -132,18 +132,15 @@ translateBtn.addEventListener("click", async () => {
   }
 
   translateBtn.disabled = true;
-
   const labelSpan = translateBtn.querySelector("span");
   const originalLabel = labelSpan ? labelSpan.textContent : translateBtn.textContent;
-  if (labelSpan) {
-    labelSpan.textContent = "Translating...";
-  } else {
-    translateBtn.textContent = "Translating...";
-  }
+
+  if (labelSpan) labelSpan.textContent = "Translating...";
+  else translateBtn.textContent = "Translating...";
 
   showNotice(`Translating into ${language.value}...`);
   output.className = "output";
-  output.textContent = "AI is translating the curriculum...";
+  output.textContent = "AI is translating...";
   copyBtn.disabled = true;
 
   const form = new FormData();
@@ -151,21 +148,40 @@ translateBtn.addEventListener("click", async () => {
   form.append("target_language", language.value);
 
   try {
-    const res = await fetch("/api/translate", {
-      method: "POST",
-      body: form
-    });
-
-    const data = await res.json();
+    const res = await fetch("/api/translate", { method: "POST", body: form });
 
     if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
       throw new Error(data.detail || "Translation failed.");
     }
 
-    await animateTyping(data.translated_text, output, 8);
+    if (!res.body) {
+      throw new Error("Streaming is not supported by this browser.");
+    }
 
-    copyBtn.disabled = !data.translated_text;
-    showNotice(`Translation complete • ${data.target_language}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let translatedText = "";
+
+    output.textContent = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      translatedText += decoder.decode(value, { stream: true });
+      output.textContent = translatedText;
+      output.scrollTop = output.scrollHeight;
+    }
+
+    translatedText += decoder.decode();
+
+    if (!translatedText.trim()) {
+      throw new Error("The AI returned an empty translation.");
+    }
+
+    copyBtn.disabled = false;
+    showNotice(`Translation complete • ${language.value}`);
   } catch (err) {
     output.className = "output empty";
     output.innerHTML = '<div class="empty-icon">!</div><h3>Translation failed</h3><p></p>';
@@ -173,12 +189,8 @@ translateBtn.addEventListener("click", async () => {
     showNotice(err.message, true);
   } finally {
     translateBtn.disabled = false;
-
-    if (labelSpan) {
-      labelSpan.textContent = originalLabel;
-    } else {
-      translateBtn.textContent = originalLabel;
-    }
+    if (labelSpan) labelSpan.textContent = originalLabel;
+    else translateBtn.textContent = originalLabel;
   }
 });
 
