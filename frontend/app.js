@@ -311,13 +311,17 @@ translateBtn.addEventListener("click", async () => {
 
     setLoading(false);
     const glossaryMissing = Array.isArray(data.glossary_missing) ? data.glossary_missing : [];
-    if (glossaryMissing.length) {
-      showNotice(
-        "Translation complete • glossary terms not applied: " +
-        glossaryMissing.join(", "),
-        true
-      );
+    const glossaryTermsUsed = Array.isArray(data.glossary_terms_used) ? data.glossary_terms_used : [];
+    let message = `Translation complete • ${language.value}`;
+    if (glossaryTermsUsed.length) {
+      message += " • glossary used: " + glossaryTermsUsed.join(", ");
+    } else if (useGlossary.checked) {
+      message += " • no glossary terms matched this text";
     }
+    if (glossaryMissing.length) {
+      message += " • not applied by AI: " + glossaryMissing.join(", ");
+    }
+    showNotice(message, glossaryMissing.length > 0);
     copyBtn.disabled = false;
     downloadBtn.disabled = false;
     saveBtn.disabled = false;
