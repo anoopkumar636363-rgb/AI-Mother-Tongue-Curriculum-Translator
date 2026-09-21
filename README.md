@@ -12,94 +12,158 @@ An AI-powered prototype that converts educational curriculum content into a stud
 - Clean side-by-side original/translated output
 - Separate Gemini workloads for normal translation vs PDF/OCR processing
 - PDF/OCR traffic can use a dedicated Gemini API key
+- Layout-preserving PDF output uses bundled Noto Sans fonts for Indian scripts
 
 ## Large PDF translation brain
 
 The layout-preserving PDF translator supports PDFs up to **200 MB** when the PDF contains selectable text. PyMuPDF reads selectable text locally, so the full PDF is not sent to Gemini for layout translation. Scanned PDFs use Gemini's native PDF understanding through the dedicated PDF key; Google's documented PDF input limit is 50 MB.
 
-### Separate Gemini API workloads
+### Separate Gemini model/key workloads
 
-The app now separates:
-- **Normal translation:** `GEMINI_TRANSLATION_API_KEY`
-- **PDF translation / PDF extraction / image OCR:** `GEMINI_PDF_API_KEY`
+There are two model lists:
 
-For genuinely separate quota, create the second key in a separate Google AI Studio/GCP project. If either key is missing, the app falls back to `GEMINI_API_KEY`.
+- **GEMINI_MODELS** — normal /api/translate text translation.
+- **GEMINI_PDF_MODELS** — scanned-PDF extraction, layout-preserving PDF translation, and image OCR.
 
-Google recommends the Files API for larger PDFs or documents reused across requests, and Gemini can process PDFs with native vision and structured extraction.
+The PDF pipeline uses the full configured fallback chain in GEMINI_PDF_MODELS. It is not limited to a fixed number of models in the Python code.
 
-A translation brain splits text blocks into batches and runs multiple workers concurrently. Every worker uses the same Gemini fallback chain:
+There are also two API-key variables:
 
-`model 1 → model 2 → model 3 → model 4`
+- **GEMINI_TRANSLATION_API_KEY** — normal text translation.
+- **GEMINI_PDF_API_KEY** — PDF translation, PDF extraction, and image OCR.
 
-If a model fails, the worker falls back to the next model. Failed batches can be requeued with bounded retries, and block IDs are validated before the result is accepted.
+For genuinely separate quota, create the second key in a separate Google AI Studio/GCP project. If either dedicated key is missing, the app falls back to GEMINI_API_KEY.
 
-Configurable environment variables:
+Google's Python SDK provides async methods under client.aio, which the API handlers use for Gemini generation. Local CPU/file work is moved off the event loop with asyncio.to_thread.
 
-- `LAYOUT_WORKERS=4` — concurrent Gemini workers
-- `LAYOUT_BATCH_CHARS=12000` — approximate text size per AI batch
-- `LAYOUT_MODEL_RETRIES=2` — attempts per fallback model
-- `LAYOUT_REQUEUE_LIMIT=2` — brain-level requeues for a failed batch
-- `LAYOUT_REQUEST_TIMEOUT=120` — seconds before a model request is treated as stuck
+### Translation brain settings
 
-Scanned/image-only PDFs over 50 MB still cannot use Gemini's native PDF understanding because Gemini's documented PDF input limit is 50 MB; use the existing image/OCR workflow for those documents.
+A PDF is converted into layout-aware text blocks. Blocks are split into batches without splitting an individual block, then several batches can run concurrently.
+
+Current defaults:
+
+- LAYOUT_WORKERS=4 — maximum concurrent Gemini translation requests.
+- LAYOUT_BATCH_CHARS=8000 — approximate text size per AI batch.
+- LAYOUT_MODEL_RETRIES=2 — attempts per model in the fallback chain.
+- LAYOUT_REQUEUE_LIMIT=2 — brain-level requeues for a failed batch.
+- LAYOUT_REQUEST_TIMEOUT=120 — seconds before a model request is treated as stuck.
+
+Each batch must return the same block IDs in the same order. Invalid or incomplete structured output is rejected before the result is accepted.
+
+## Indian-script PDF fonts
+
+PDF reconstruction does not rely on the platform's generic sans-serif font. The backend maps each target language to a script-specific bundled Noto Sans font and loads it with PyMuPDF's Archive plus CSS @font-face.
+
+Bundled fonts:
+
+- Noto Sans — English
+- Noto Sans Devanagari — Hindi and Marathi
+- Noto Sans Kannada — Kannada
+- Noto Sans Telugu — Telugu
+- Noto Sans Tamil — Tamil
+- Noto Sans Malayalam — Malayalam
+- Noto Sans Bengali — Bengali
+- Noto Sans Gujarati — Gujarati
+- Noto Sans Gurmukhi — Punjabi
+
+The repository includes an automated GitHub Actions font-bundling workflow. If you clone the repository before that workflow has populated backend/fonts/, run the workflow or download the regular Noto Sans TTF files from the official Noto repository:
+
+- https://github.com/notofonts/noto-fonts
+- https://notofonts.github.io/
+
+Place the files in backend/fonts/ using the filenames expected by backend/main.py.
+
+Noto fonts are distributed under the SIL Open Font License; check the upstream font metadata/repository for the exact license text.
+
+The PDF reconstruction uses a small inset for redaction rectangles to reduce accidental removal of adjacent text. It also retries an overflowing translated block at smaller font sizes up to three times. If one block still cannot fit or be inserted, that block is skipped and the rest of the document continues.
+
+## PDF extraction cleanup
+
+Gemini File API uploads used for scanned PDFs are deleted in a finally cleanup step after extraction. Cleanup failures are logged but never replace the original request result.
+
+Text extracted from /api/extract-pdf is still capped at **30,000 characters** because that endpoint's response contract is unchanged. When truncation occurs, the response keeps "truncated": true and the backend logs a warning.
 
 ## Stack
 
 - FastAPI
 - Python
-- Google Gemini API via `google-genai`
-- PyPDF for PDF text extraction
+- Google Gemini API via google-genai
+- PyPDF for local PDF text extraction
+- PyMuPDF for layout-aware PDF reconstruction
+- Pillow for image validation
 - HTML/CSS/JavaScript frontend
 
 ## Run locally
 
 ### 1. Create a virtual environment
 
-```bash
+Windows PowerShell:
+
+~~~powershell
 python -m venv venv
-venv\\Scripts\\activate
-```
+venv\Scripts\activate
+~~~
 
 ### 2. Install dependencies
 
-```bash
+~~~bash
 pip install -r requirements.txt
-```
+~~~
 
-### 3. Add your Gemini API key
+### 3. Add your Gemini API keys
 
-Copy `.env.example` to `.env` and add:
+Copy .env.example to .env and add:
 
-```
+~~~env
 GEMINI_TRANSLATION_API_KEY=your_translation_key_here
 GEMINI_PDF_API_KEY=your_pdf_key_here
 
 # Optional backward-compatible fallback:
 GEMINI_API_KEY=your_key_here
-```
+~~~
+
+Do not commit .env or expose API keys in screenshots, source code, or GitHub.
 
 ### 4. Start the app
 
-```bash
+~~~bash
 uvicorn backend.main:app --reload
-```
+~~~
 
 Open http://127.0.0.1:8000
 
+## Tests
+
+Install the dependencies and run:
+
+~~~bash
+pytest
+~~~
+
+The basic tests cover:
+
+- structured translated-block validation
+- layout batch splitting
+- supported/unsupported target-language validation
+
 ## Project structure
 
-```
+~~~
 backend/
   main.py
+  fonts/
+    NotoSans*.ttf
 frontend/
   index.html
   style.css
   app.js
+tests/
+  test_main.py
 requirements.txt
 .env.example
 .gitignore
 README.md
-```
+~~~
 
 ## Important
 
