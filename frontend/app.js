@@ -818,7 +818,9 @@ libraryLoadBtn.addEventListener("click", () => {
   copyBtn.disabled = false;
   downloadBtn.disabled = false;
   saveBtn.disabled = false;
-  showTab("translateView");
+  syncGlossaryLanguages();
+resetGlossaryForm();
+showTab("translateView");
   showNotice('Loaded "' + libraryItem.title + '" into Translate.');
   updateCount();
 });
@@ -881,6 +883,40 @@ const glossaryCancelBtn = document.getElementById("glossaryCancelBtn");
 
 let glossaryPage = 1;
 let glossaryTotalPages = 0;
+
+function syncGlossaryLanguages() {
+  const languages = [...language.options].map(option => ({
+    value: option.value,
+    label: option.textContent,
+  }));
+  const currentLanguage = language.value;
+  const currentGlossaryLanguage = glossaryTargetLanguage.value;
+
+  glossaryTargetLanguage.replaceChildren();
+  languages.forEach(({ value, label }) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    glossaryTargetLanguage.appendChild(option);
+  });
+
+  glossaryLanguageFilter.replaceChildren();
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "All languages";
+  glossaryLanguageFilter.appendChild(allOption);
+  languages.forEach(({ value, label }) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    glossaryLanguageFilter.appendChild(option);
+  });
+
+  glossaryTargetLanguage.value = languages.some(item => item.value === currentGlossaryLanguage)
+    ? currentGlossaryLanguage
+    : currentLanguage;
+  glossaryLanguageFilter.value = "";
+}
 
 async function glossaryRequest(url, options = {}) {
   const res = await fetch(url, options);
@@ -961,7 +997,8 @@ function resetGlossaryForm() {
   glossaryTranslated.value = "";
   glossarySubjectInput.value = "";
   glossaryFormTitle.textContent = "Add term";
-  glossarySaveBtn.textContent = "Save term →";
+  glossarySaveBtn.textContent = "Add term →";
+  glossaryTargetLanguage.value = language.value;
   glossaryCancelBtn.classList.add("hidden");
 }
 
