@@ -935,7 +935,12 @@ function syncGlossaryLanguages() {
 async function glossaryRequest(url, options = {}) {
   const res = await fetch(url, options);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || "Glossary request failed.");
+  if (!res.ok) {
+    const detail = Array.isArray(data.detail)
+      ? data.detail.map(item => item && item.msg).filter(Boolean).join(", ")
+      : data.detail;
+    throw new Error(detail || "Glossary request failed.");
+  }
   return data;
 }
 
@@ -1056,12 +1061,19 @@ async function deleteGlossary(id) {
 glossaryForm.addEventListener("submit", async event => {
   event.preventDefault();
   setGlossaryError("");
+  const sourceTerm = glossarySource.value.trim();
+  const targetLanguage = glossaryTargetLanguage.value.trim();
+  const translatedTerm = glossaryTranslated.value.trim();
+  if (!sourceTerm || !translatedTerm || !targetLanguage) {
+    setGlossaryError("Source term, translated term, and target language are required.");
+    return;
+  }
   glossarySaveBtn.disabled = true;
   try {
     const payload = {
-      source_term: glossarySource.value.trim(),
-      target_language: glossaryTargetLanguage.value,
-      translated_term: glossaryTranslated.value.trim(),
+      source_term: sourceTerm,
+      target_language: targetLanguage,
+      translated_term: translatedTerm,
       subject: glossarySubjectInput.value.trim(),
     };
     const id = glossaryEditId.value;
@@ -1078,6 +1090,9 @@ glossaryForm.addEventListener("submit", async event => {
   }
 });
 
+language.addEventListener("change", () => {
+  if (!glossaryEditId.value) glossaryTargetLanguage.value = language.value;
+});
 glossaryCancelBtn.addEventListener("click", resetGlossaryForm);
 glossarySearchBtn.addEventListener("click", filterGlossaryRows);
 glossarySearch.addEventListener("input", filterGlossaryRows);
@@ -1166,4 +1181,5 @@ logoutBtn.addEventListener("click", () => {
   setDashboardError("");
 });
 
+syncGlossaryLanguages();
 showTab("translateView");
