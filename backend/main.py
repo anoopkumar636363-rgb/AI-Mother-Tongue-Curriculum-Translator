@@ -354,6 +354,38 @@ async def translate_text(
     )
 
 
+SCRIPT_RANGES = {
+    "Kannada": (0x0C80, 0x0CFF),
+    "Hindi": (0x0900, 0x097F),
+    "Marathi": (0x0900, 0x097F),
+    "Telugu": (0x0C00, 0x0C7F),
+    "Tamil": (0x0B80, 0x0BFF),
+    "Malayalam": (0x0D00, 0x0D7F),
+    "Bengali": (0x0980, 0x09FF),
+    "Gujarati": (0x0A80, 0x0AFF),
+    "Punjabi": (0x0A00, 0x0A7F),
+}
+
+
+def clean_glossary_suggestion(raw: str, target_language: str) -> str:
+    raw = (raw or "").strip()
+    text = raw.splitlines()[0] if raw else ""
+    # drop anything in brackets, e.g. "(transistor)"
+    text = re.sub(r"\s*[\(\[（【][^\)\]）】]*[\)\]）】]", "", text)
+    parts = [p.strip() for p in re.split(r"\s+[-–—]\s+|\s*[|/;=]\s*", text) if p.strip()]
+    script = SCRIPT_RANGES.get(target_language)
+    result = parts[0] if parts else text
+    if script:
+        lo, hi = script
+        in_script = [p for p in parts if any(lo <= ord(ch) <= hi for ch in p)]
+        if in_script:
+            result = in_script[0]
+        # remove trailing Latin-only words after the translated term
+        if any(lo <= ord(ch) <= hi for ch in result):
+            result = re.sub(r"(\s+[A-Za-z][A-Za-z0-9'’\-]*)+$", "", result)
+    return result.strip().strip("\"'“”‘’ ")
+
+
 @app.post("/api/glossary/suggest")
 async def suggest_glossary_term(
     source_term: str = Form(...),
@@ -370,7 +402,9 @@ async def suggest_glossary_term(
     subject_hint = f" The subject area is: {subject.strip()}." if subject.strip() else ""
     prompt = (
         f"Translate this educational term into {target_language}.{subject_hint}\n"
-        "Return ONLY the translated term. No quotes, no explanation, no romanization.\n"
+        f"Reply with ONLY the {target_language} term, written in {target_language} script.\n"
+        "Do NOT include the original English word, brackets, transliteration, slashes, "
+        "quotes or any explanation.\n"
         f"Term: {source_term}"
     )
     errors = []
@@ -383,7 +417,7 @@ async def suggest_glossary_term(
                 model=model, contents=prompt, config=config
             )
             raw = (response.text or "").strip()
-            suggestion = raw.splitlines()[0].strip().strip("\"'“”‘’ ") if raw else ""
+            suggestion = clean_glossary_suggestion(raw, target_language)
             if not suggestion:
                 raise ValueError("Gemini returned an empty suggestion.")
             return {
