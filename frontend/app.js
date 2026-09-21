@@ -860,7 +860,6 @@ saveBtn.addEventListener("click", async () => {
 
 
 // Translation glossary
-const glossaryView = document.getElementById("glossaryView");
 const glossaryLanguageFilter = document.getElementById("glossaryLanguageFilter");
 const glossarySubjectFilter = document.getElementById("glossarySubjectFilter");
 const glossarySearch = document.getElementById("glossarySearch");
@@ -877,7 +876,6 @@ const glossarySource = document.getElementById("glossarySource");
 const glossaryTargetLanguage = document.getElementById("glossaryTargetLanguage");
 const glossaryTranslated = document.getElementById("glossaryTranslated");
 const glossarySubjectInput = document.getElementById("glossarySubject");
-const glossaryNotes = document.getElementById("glossaryNotes");
 const glossarySaveBtn = document.getElementById("glossarySaveBtn");
 const glossaryCancelBtn = document.getElementById("glossaryCancelBtn");
 
