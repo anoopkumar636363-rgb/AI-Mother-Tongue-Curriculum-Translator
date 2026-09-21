@@ -10,11 +10,22 @@ An AI-powered prototype that converts educational curriculum content into a stud
 - Translate into Kannada, Hindi, Telugu, Tamil, Marathi, Malayalam, Bengali, Gujarati, Punjabi, or English
 - Preserve headings, bullet points, formulas, examples, and technical terms where possible
 - Clean side-by-side original/translated output
-- Character limit keeps the hackathon demo fast and predictable
+- Separate Gemini workloads for normal translation vs PDF/OCR processing
+- PDF/OCR traffic can use a dedicated Gemini API key
 
 ## Large PDF translation brain
 
-The layout-preserving PDF translator supports PDFs up to **200 MB** when the PDF contains selectable text. PyMuPDF reads the PDF locally, so the full PDF is not sent to Gemini.
+The layout-preserving PDF translator supports PDFs up to **200 MB** when the PDF contains selectable text. PyMuPDF reads selectable text locally, so the full PDF is not sent to Gemini for layout translation. Scanned PDFs use Gemini's native PDF understanding through the dedicated PDF key; Google's documented PDF input limit is 50 MB.
+
+### Separate Gemini API workloads
+
+The app now separates:
+- **Normal translation:** `GEMINI_TRANSLATION_API_KEY`
+- **PDF translation / PDF extraction / image OCR:** `GEMINI_PDF_API_KEY`
+
+For genuinely separate quota, create the second key in a separate Google AI Studio/GCP project. If either key is missing, the app falls back to `GEMINI_API_KEY`.
+
+Google recommends the Files API for larger PDFs or documents reused across requests, and Gemini can process PDFs with native vision and structured extraction.
 
 A translation brain splits text blocks into batches and runs multiple workers concurrently. Every worker uses the same Gemini fallback chain:
 
@@ -60,6 +71,10 @@ pip install -r requirements.txt
 Copy `.env.example` to `.env` and add:
 
 ```
+GEMINI_TRANSLATION_API_KEY=your_translation_key_here
+GEMINI_PDF_API_KEY=your_pdf_key_here
+
+# Optional backward-compatible fallback:
 GEMINI_API_KEY=your_key_here
 ```
 
