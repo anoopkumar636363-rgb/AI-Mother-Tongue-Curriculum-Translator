@@ -15,6 +15,8 @@ const notice = document.getElementById("notice");
 const loadingBar = document.getElementById("loadingBar");
 const loadingLabel = document.getElementById("loadingLabel");
 const health = document.getElementById("health");
+const subject = document.getElementById("subject");
+const grade = document.getElementById("grade");
 
 function updateCount() {
   charCount.textContent = sourceText.value.length.toLocaleString();
@@ -154,6 +156,8 @@ translatePdfBtn.addEventListener("click", async () => {
   const form = new FormData();
   form.append("file", selectedPdfFile);
   form.append("target_language", language.value);
+  form.append("subject", subject.value.trim());
+  form.append("grade", grade.value.trim());
 
   try {
     const res = await fetch("/api/translate-pdf", {
@@ -258,6 +262,8 @@ translateBtn.addEventListener("click", async () => {
   const form = new FormData();
   form.append("text", text);
   form.append("target_language", language.value);
+  form.append("subject", subject.value.trim());
+  form.append("grade", grade.value.trim());
 
   try {
     const res = await fetch("/api/translate", { method: "POST", body: form });
@@ -335,3 +341,232 @@ fetch("/api/health")
   });
 
 updateCount();
+
+
+// Teacher/Admin dashboard
+const tabs = document.querySelectorAll(".tab-btn");
+const translateView = document.getElementById("translateView");
+const dashboardView = document.getElementById("dashboardView");
+const adminLogin = document.getElementById("adminLogin");
+const adminPassword = document.getElementById("adminPassword");
+const loginBtn = document.getElementById("loginBtn");
+const adminError = document.getElementById("adminError");
+const dashboardContent = document.getElementById("dashboardContent");
+const dashboardActions = document.getElementById("dashboardActions");
+const dashboardError = document.getElementById("dashboardError");
+const daysSelect = document.getElementById("daysSelect");
+const csvBtn = document.getElementById("csvBtn");
+const logoutBtn = document.getElementById("logoutBtn");
+const eventLanguage = document.getElementById("eventLanguage");
+const eventSource = document.getElementById("eventSource");
+const eventSuccess = document.getElementById("eventSuccess");
+const eventsBody = document.getElementById("eventsBody");
+const emptyEvents = document.getElementById("emptyEvents");
+const prevPage = document.getElementById("prevPage");
+const nextPage = document.getElementById("nextPage");
+const pageLabel = document.getElementById("pageLabel");
+const eventMeta = document.getElementById("eventMeta");
+const sourceBreakdown = document.getElementById("sourceBreakdown");
+let adminPasswordMemory = "";
+let adminPage = 1;
+let languageChart = null;
+let dailyChart = null;
+
+function setDashboardError(message) {
+  dashboardError.textContent = message;
+  dashboardError.classList.toggle("hidden", !message);
+}
+
+function adminHeaders() {
+  return { "X-Admin-Password": adminPasswordMemory };
+}
+
+function showTab(id) {
+  tabs.forEach(tab => tab.classList.toggle("active", tab.dataset.tab === id));
+  translateView.classList.toggle("hidden", id !== "translateView");
+  dashboardView.classList.toggle("hidden", id !== "dashboardView");
+  if (id === "dashboardView" && adminPasswordMemory) loadDashboard();
+}
+
+tabs.forEach(tab => tab.addEventListener("click", () => showTab(tab.dataset.tab)));
+
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function destroyCharts() {
+  if (languageChart) { languageChart.destroy(); languageChart = null; }
+  if (dailyChart) { dailyChart.destroy(); dailyChart = null; }
+}
+
+function renderCharts(stats) {
+  if (!window.Chart) return;
+  destroyCharts();
+  languageChart = new Chart(document.getElementById("languageChart"), {
+    type: "bar",
+    data: {
+      labels: stats.by_target_language.map(x => x.label),
+      datasets: [{ label: "Translations", data: stats.by_target_language.map(x => x.count), borderWidth: 0 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+      scales: { x: { ticks: { color: "#7d88a3" }, grid: { color: "rgba(255,255,255,.05)" } },
+        y: { beginAtZero: true, ticks: { color: "#7d88a3", precision: 0 }, grid: { color: "rgba(255,255,255,.05)" } } } }
+  });
+  dailyChart = new Chart(document.getElementById("dailyChart"), {
+    type: "line",
+    data: {
+      labels: stats.daily.map(x => x.date),
+      datasets: [{ label: "Translations", data: stats.daily.map(x => x.count), tension: .25, fill: false, borderWidth: 2 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+      scales: { x: { ticks: { color: "#7d88a3", maxTicksLimit: 8 }, grid: { color: "rgba(255,255,255,.05)" } },
+        y: { beginAtZero: true, ticks: { color: "#7d88a3", precision: 0 }, grid: { color: "rgba(255,255,255,.05)" } } } }
+  });
+}
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value).replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+  }[char]));
+}
+
+function renderSourceBreakdown(items) {
+  if (!items.length) {
+    sourceBreakdown.innerHTML = '<div class="empty-dashboard">No translations yet</div>';
+    return;
+  }
+  sourceBreakdown.innerHTML = items.map(item =>
+    '<div class="source-pill"><span>' + escapeHtml(item.label) + '</span><strong>' + formatNumber(item.count) + '</strong></div>'
+  ).join("");
+}
+
+async function fetchStats() {
+  const res = await fetch("/api/admin/stats?days=" + encodeURIComponent(daysSelect.value), { headers: adminHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "Could not load dashboard statistics.");
+  return data;
+}
+
+async function loadDashboard() {
+  if (!adminPasswordMemory) return;
+  setDashboardError("");
+  try {
+    const stats = await fetchStats();
+    document.getElementById("statTotal").textContent = formatNumber(stats.total_translations);
+    document.getElementById("statSuccess").textContent = stats.success_rate + "%";
+    document.getElementById("statChars").textContent = formatNumber(stats.total_characters);
+    document.getElementById("statAvg").textContent = formatNumber(Math.round(stats.average_duration_ms)) + " ms";
+    renderCharts(stats);
+    renderSourceBreakdown(stats.by_source_type || []);
+
+    const currentLanguage = eventLanguage.value;
+    eventLanguage.innerHTML = '<option value="">All languages</option>' +
+      (stats.by_target_language || []).map(x => '<option value="' + escapeHtml(x.label) + '">' + escapeHtml(x.label) + '</option>').join("");
+    if ([...eventLanguage.options].some(o => o.value === currentLanguage)) eventLanguage.value = currentLanguage;
+    await loadEvents();
+  } catch (err) {
+    setDashboardError(err.message);
+  }
+}
+
+async function loadEvents() {
+  const params = new URLSearchParams({
+    page: adminPage, page_size: 25, language: eventLanguage.value,
+    source_type: eventSource.value, success: eventSuccess.value
+  });
+  const res = await fetch("/api/admin/events?" + params.toString(), { headers: adminHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    setDashboardError(data.detail || "Could not load recent events.");
+    return;
+  }
+  eventsBody.innerHTML = "";
+  emptyEvents.classList.toggle("hidden", data.events.length !== 0);
+  data.events.forEach(event => {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>" + escapeHtml(new Date(event.created_at).toLocaleString()) + "</td>" +
+      "<td>" + escapeHtml(event.source_type) + "</td>" +
+      "<td>" + escapeHtml(event.target_language) + "</td>" +
+      "<td>" + escapeHtml(event.subject || "—") + "</td>" +
+      "<td>" + escapeHtml(event.grade || "—") + "</td>" +
+      "<td>" + formatNumber(event.characters) + "</td>" +
+      "<td>" + escapeHtml(event.model || "—") + "</td>" +
+      "<td>" + formatNumber(event.duration_ms) + " ms</td>" +
+      '<td class="' + (event.success ? "status-ok" : "status-fail") + '">' + (event.success ? "Success" : "Failed") + "</td>";
+    eventsBody.appendChild(tr);
+  });
+  const totalPages = data.total_pages || 0;
+  pageLabel.textContent = totalPages ? "Page " + data.page + " of " + totalPages : "No pages";
+  prevPage.disabled = data.page <= 1;
+  nextPage.disabled = !totalPages || data.page >= totalPages;
+  eventMeta.textContent = data.total ? formatNumber(data.total) + " logged event" + (data.total === 1 ? "" : "s") : "No translations yet";
+}
+
+loginBtn.addEventListener("click", async () => {
+  const password = adminPassword.value;
+  if (!password) {
+    adminError.textContent = "Enter the admin password.";
+    adminError.classList.remove("hidden");
+    return;
+  }
+  loginBtn.disabled = true;
+  adminError.classList.add("hidden");
+  try {
+    const res = await fetch("/api/admin/login", { method: "POST", headers: { "X-Admin-Password": password } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Admin login failed.");
+    adminPasswordMemory = password;
+    adminPassword.value = "";
+    adminLogin.classList.add("hidden");
+    dashboardContent.classList.remove("hidden");
+    dashboardActions.classList.remove("hidden");
+    adminPage = 1;
+    await loadDashboard();
+  } catch (err) {
+    adminError.textContent = err.message;
+    adminError.classList.remove("hidden");
+  } finally {
+    loginBtn.disabled = false;
+  }
+});
+
+adminPassword.addEventListener("keydown", event => {
+  if (event.key === "Enter") loginBtn.click();
+});
+daysSelect.addEventListener("change", () => { adminPage = 1; loadDashboard(); });
+[eventLanguage, eventSource, eventSuccess].forEach(filter => filter.addEventListener("change", () => { adminPage = 1; loadEvents(); }));
+prevPage.addEventListener("click", () => { if (adminPage > 1) { adminPage -= 1; loadEvents(); } });
+nextPage.addEventListener("click", () => { adminPage += 1; loadEvents(); });
+
+csvBtn.addEventListener("click", async () => {
+  try {
+    const res = await fetch("/api/admin/export/events.csv", { headers: adminHeaders() });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || "Could not export the event log.");
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "translation-events.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    setDashboardError(err.message);
+  }
+});
+
+logoutBtn.addEventListener("click", () => {
+  adminPasswordMemory = "";
+  adminPage = 1;
+  destroyCharts();
+  dashboardContent.classList.add("hidden");
+  dashboardActions.classList.add("hidden");
+  adminLogin.classList.remove("hidden");
+  adminError.classList.add("hidden");
+  setDashboardError("");
+});
+
+showTab("translateView");
