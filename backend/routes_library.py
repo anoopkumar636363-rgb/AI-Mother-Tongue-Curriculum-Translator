@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from backend.db import get_connection
-from backend.main import ALLOWED_LANGUAGES
+from backend.config import ALLOWED_LANGUAGES
 
 logger = logging.getLogger("curriculum-translator")
 
