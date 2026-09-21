@@ -1,14 +1,18 @@
+import json
 import os
 import re
+from html import escape as html_escape
 from io import BytesIO
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
 from pypdf import PdfReader
+import pymupdf
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -28,6 +32,9 @@ MODEL_LIST = [
     if model.strip()
 ]
 MAX_CHARS = 30000
+MAX_LAYOUT_PDF_MB = 50
+MAX_LAYOUT_PDF_PAGES = 20
+MAX_LAYOUT_PDF_CHARS = 50000
 
 ALLOWED_LANGUAGES = {
     "Kannada": "kn",
@@ -312,6 +319,328 @@ async def extract_pdf(file: UploadFile = File(...)):
         "method": "gemini-pdf",
         "model": used_model,
     }
+
+
+class TranslatedBlock(BaseModel):
+    id: str
+    text: str
+
+
+class TranslatedBlocks(BaseModel):
+    blocks: list[TranslatedBlock]
+
+
+def extract_layout_blocks(pdf_data: bytes):
+    """Extract selectable text blocks with their original page rectangles and basic styling."""
+    doc = pymupdf.open(stream=pdf_data, filetype="pdf")
+    if len(doc) > MAX_LAYOUT_PDF_PAGES:
+        doc.close()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Layout-preserving mode supports up to {MAX_LAYOUT_PDF_PAGES} pages for this prototype.",
+        )
+
+    pages = []
+    total_chars = 0
+
+    try:
+        for page_number, page in enumerate(doc):
+            page_blocks = []
+            text_dict = page.get_text("dict", flags=pymupdf.TEXTFLAGS_TEXT)
+
+            for block_number, block in enumerate(text_dict.get("blocks", [])):
+                if block.get("type") != 0:
+                    continue
+
+                lines = block.get("lines", [])
+                line_texts = []
+                spans = []
+
+                for line in lines:
+                    parts = []
+                    for span in line.get("spans", []):
+                        value = span.get("text", "")
+                        if value:
+                            parts.append(value)
+                            spans.append(span)
+                    if parts:
+                        line_texts.append("".join(parts))
+
+                text = "\n".join(line_texts).strip()
+                if not text:
+                    continue
+
+                rect = pymupdf.Rect(block["bbox"])
+                if rect.is_empty or rect.width < 1 or rect.height < 1:
+                    continue
+
+                first_span = spans[0] if spans else {}
+                font_size = float(first_span.get("size", 11) or 11)
+                font_flags = int(first_span.get("flags", 0) or 0)
+                color_value = int(first_span.get("color", 0) or 0)
+                color_hex = f"#{color_value & 0xFFFFFF:06x}"
+
+                block_id = f"p{page_number + 1}b{block_number + 1}"
+                page_blocks.append(
+                    {
+                        "id": block_id,
+                        "page": page_number,
+                        "rect": rect,
+                        "text": text,
+                        "font_size": max(6.0, min(font_size, 48.0)),
+                        "bold": bool(font_flags & 16),
+                        "italic": bool(font_flags & 2),
+                        "color": color_hex,
+                    }
+                )
+                total_chars += len(text)
+
+            pages.append(page_blocks)
+
+        if not any(pages):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "This PDF has no selectable text. Layout-preserving mode currently "
+                    "works with text-based PDFs; use Scan / Image or normal PDF translation for scanned PDFs."
+                ),
+            )
+
+        if total_chars > MAX_LAYOUT_PDF_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"This PDF contains {total_chars:,} text characters. "
+                    f"Keep it under {MAX_LAYOUT_PDF_CHARS:,} characters for the layout-preserving demo."
+                ),
+            )
+
+        return doc, pages
+    except Exception:
+        doc.close()
+        raise
+
+
+def build_layout_translation_prompt(blocks, target_language: str) -> str:
+    payload = [{"id": block["id"], "text": block["text"]} for block in blocks]
+    return f"""
+You are translating educational PDF text into {target_language}.
+
+Translate every block while preserving the PDF's structure.
+
+Rules:
+1. Return exactly one object for every input block, using the same id.
+2. Translate only the human-language text.
+3. Preserve formulas, equations, numbers, units, symbols, code, URLs, variable names,
+   chemical notation, and standard technical terms when translating them would reduce clarity.
+4. Preserve line breaks when they are meaningful to the source.
+5. Do not summarize, merge, split, reorder, or omit blocks.
+6. Do not add explanations or commentary.
+7. Use natural language appropriate for a student.
+
+INPUT BLOCKS:
+{json.dumps(payload, ensure_ascii=False)}
+""".strip()
+
+
+def translate_layout_blocks(client: genai.Client, blocks, target_language: str):
+    """Translate blocks in manageable batches and keep their ids stable."""
+    batches = []
+    current = []
+    current_chars = 0
+    batch_limit = 12000
+
+    for block in blocks:
+        size = len(block["text"])
+        if current and current_chars + size > batch_limit:
+            batches.append(current)
+            current = []
+            current_chars = 0
+        current.append(block)
+        current_chars += size
+
+    if current:
+        batches.append(current)
+
+    translated_by_id = {}
+
+    for batch in batches:
+        prompt = build_layout_translation_prompt(batch, target_language)
+        errors = []
+        response = None
+
+        for model in MODEL_LIST:
+            try:
+                thinking_level = (
+                    "minimal"
+                    if model in {"gemini-3.5-flash-lite", "gemini-3.6-flash"}
+                    else "low"
+                )
+                config = types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=thinking_level
+                    ),
+                    response_mime_type="application/json",
+                    response_schema=TranslatedBlocks,
+                )
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=config,
+                )
+                break
+            except Exception as exc:
+                errors.append(f"{model}: {exc}")
+                if not is_retryable_model_error(exc):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"PDF layout translation failed with {model}: {exc}",
+                    ) from exc
+
+        if response is None:
+            raise HTTPException(
+                status_code=502,
+                detail="PDF layout translation failed. Tried: " + " | ".join(errors),
+            )
+
+        try:
+            parsed = TranslatedBlocks.model_validate_json(response.text)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="Gemini returned an invalid layout translation response.",
+            ) from exc
+
+        expected_ids = {block["id"] for block in batch}
+        received_ids = {item.id for item in parsed.blocks}
+
+        if received_ids != expected_ids:
+            raise HTTPException(
+                status_code=502,
+                detail="Gemini changed the PDF text block structure. Please try the PDF again.",
+            )
+
+        for item in parsed.blocks:
+            translated_by_id[item.id] = item.text
+
+    return translated_by_id
+
+
+def block_html(text: str) -> str:
+    safe = html_escape(text, quote=False)
+    safe = safe.replace("\n", "<br>")
+    return safe
+
+
+def apply_layout_translations(doc, pages, translated_by_id):
+    """Remove only original text and place translated text back into the same rectangles."""
+    for page_number, blocks in enumerate(pages):
+        page = doc[page_number]
+
+        # Remove text only. Images and vector graphics are deliberately preserved.
+        for block in blocks:
+            page.add_redact_annot(
+                block["rect"],
+                fill=False,
+                cross_out=False,
+            )
+        page.apply_redactions(
+            images=pymupdf.PDF_REDACT_IMAGE_NONE,
+            graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+            text=pymupdf.PDF_REDACT_TEXT_REMOVE,
+        )
+
+        for block in blocks:
+            translated = translated_by_id.get(block["id"], "").strip()
+            if not translated:
+                continue
+
+            font_weight = "bold" if block["bold"] else "normal"
+            font_style = "italic" if block["italic"] else "normal"
+            css = (
+                "* {"
+                "font-family: sans-serif;"
+                f"font-size: {block['font_size']:.2f}pt;"
+                f"font-weight: {font_weight};"
+                f"font-style: {font_style};"
+                f"color: {block['color']};"
+                "margin: 0;"
+                "padding: 0;"
+                "line-height: 1.15;"
+                "}"
+            )
+
+            page.insert_htmlbox(
+                block["rect"],
+                block_html(translated),
+                css=css,
+                scale_low=0,
+                overlay=True,
+            )
+
+    return doc
+
+
+@app.post("/api/translate-pdf")
+async def translate_pdf(
+    file: UploadFile = File(...),
+    target_language: str = Form(...),
+):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Please upload a PDF file.")
+
+    if target_language not in ALLOWED_LANGUAGES:
+        raise HTTPException(status_code=400, detail="Unsupported target language.")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="The uploaded PDF is empty.")
+
+    if len(data) > MAX_LAYOUT_PDF_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail=f"PDF is too large. Keep it under {MAX_LAYOUT_PDF_MB} MB.",
+        )
+
+    client = get_client()
+    doc, pages = extract_layout_blocks(data)
+    all_blocks = [block for page_blocks in pages for block in page_blocks]
+
+    try:
+        translated_by_id = translate_layout_blocks(
+            client,
+            all_blocks,
+            target_language,
+        )
+        apply_layout_translations(doc, pages, translated_by_id)
+
+        output = BytesIO()
+        doc.save(output, garbage=4, deflate=True)
+        pdf_bytes = output.getvalue()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not build the translated PDF: {exc}",
+        ) from exc
+    finally:
+        doc.close()
+
+    original_name = re.sub(r"[^A-Za-z0-9._-]+", "-", file.filename)
+    base_name = re.sub(r"\.pdf$", "", original_name, flags=re.IGNORECASE).strip("-") or "curriculum"
+    safe_language = re.sub(r"[^A-Za-z0-9]+", "-", target_language.lower()).strip("-")
+    download_name = f"{base_name}-{safe_language}-translated.pdf"
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_name}"',
+            "X-PDF-Pages": str(len(pages)),
+            "X-PDF-Blocks": str(len(all_blocks)),
+        },
+    )
 
 
 IMAGE_MODELS = [
