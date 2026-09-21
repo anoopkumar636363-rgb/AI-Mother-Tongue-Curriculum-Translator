@@ -209,6 +209,9 @@ The test suite covers:
 - admin login with correct, incorrect, and missing passwords
 - dashboard stats aggregation from sample SQLite events
 - logging failures being ignored so they cannot break /api/translate
+- library create/read/update/delete
+- library search, filters, and pagination
+- library validation and 404 handling
 
 ## Project structure
 
@@ -217,6 +220,7 @@ backend/
   main.py
   db.py
   routes_admin.py
+  routes_library.py
   data/
     app.db
   fonts/
@@ -228,6 +232,7 @@ frontend/
 tests/
   test_main.py
   test_admin.py
+  test_library.py
 requirements.txt
 .env.example
 .gitignore
