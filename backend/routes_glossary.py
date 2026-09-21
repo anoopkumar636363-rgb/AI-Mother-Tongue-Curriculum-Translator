@@ -285,200 +285,60 @@ async def export_glossary(
         logger.exception("Failed to export glossary CSV")
         raise HTTPException(status_code=500, detail="Could not export glossary CSV.")
 
-@router.put("/{item_id}")
-async def update_glossary(item_id: int, item: GlossaryUpdate):
-    data = item.model_dump(exclude_unset=True)
-    if not data:
-        raise HTTPException(status_code=400, detail="Provide at least one field to update.")
-
-    fields = []
-    values = []
-    allowed = {
-        "source_term",
-        "target_language",
-        "translated_term",
-        "subject",
-        "notes",
-    }
-
-    for field in allowed:
-        if field in data:
-            fields.append(f"{field} = ?")
-            values.append(data[field])
-
-    values.append(_now())
-    values.append(item_id)
-
+@router.get("/export")
+async def export_glossary(
+    language: str = Query(""),
+    subject: str = Query(""),
+    q: str = Query(""),
+):
     try:
-        with get_connection() as conn:
-            if _get_item(conn, item_id) is None:
-                raise HTTPException(status_code=404, detail="Glossary term not found.")
+        language = language.strip()
+        subject = subject.strip()
+        q = q.strip()
+        _validate_filters(language, subject, q)
 
-            conn.execute(
+        clauses = []
+        params = []
+        if language:
+            clauses.append("target_language = ?")
+            params.append(language)
+        if subject:
+            clauses.append("subject = ?")
+            params.append(subject)
+        if q:
+            clauses.append("(source_term LIKE ? COLLATE NOCASE OR translated_term LIKE ? COLLATE NOCASE)")
+            pattern = f"%{q}%"
+            params.extend([pattern, pattern])
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+
+        with get_connection() as conn:
+            rows = conn.execute(
                 f"""
-                UPDATE glossary_terms
-                SET {", ".join(fields)}, updated_at = ?
-                WHERE id = ?
+                SELECT source_term, target_language, translated_term, subject, notes
+                FROM glossary_terms
+                {where}
+                ORDER BY source_term COLLATE NOCASE ASC, id ASC
                 """,
-                values,
-            )
-            updated = _get_item(conn, item_id)
-            conn.commit()
-        return dict(updated)
-    except HTTPException:
-        raise
-    except sqlite3.IntegrityError:
-        raise HTTPException(
-            status_code=409,
-            detail="A glossary term with the same source term, language, and subject already exists.",
+                params,
+            ).fetchall()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["source_term", "target_language", "translated_term", "subject", "notes"])
+        for row in rows:
+            writer.writerow([row[key] for key in row.keys()])
+
+        data = output.getvalue().encode("utf-8-sig")
+        return StreamingResponse(
+            iter([data]),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="translation-glossary.csv"'},
         )
-    except Exception:
-        logger.exception("Failed to update glossary term %s", item_id)
-        raise HTTPException(status_code=500, detail="Could not update glossary term.")
-
-
-@router.delete("/{item_id}")
-async def delete_glossary(item_id: int):
-    try:
-        with get_connection() as conn:
-            cursor = conn.execute(
-                "DELETE FROM glossary_terms WHERE id = ?",
-                (item_id,),
-            )
-            if cursor.rowcount == 0:
-                raise HTTPException(status_code=404, detail="Glossary term not found.")
-            conn.commit()
-        return {"deleted": True, "id": item_id}
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Failed to delete glossary term %s", item_id)
-        raise HTTPException(status_code=500, detail="Could not delete glossary term.")
-
-
-@router.post("/import")
-async def import_glossary(file: UploadFile = File(...)):
-    try:
-        data = await file.read(MAX_IMPORT_BYTES + 1)
-        if len(data) > MAX_IMPORT_BYTES:
-            raise HTTPException(status_code=413, detail="CSV file is too large. Maximum size is 5 MB.")
-        if not data:
-            raise HTTPException(status_code=400, detail="The uploaded CSV is empty.")
-
-        try:
-            text = data.decode("utf-8-sig")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="CSV must be UTF-8 encoded. Excel UTF-8 BOM exports are supported.",
-            ) from exc
-
-        reader = csv.DictReader(io.StringIO(text))
-        headers = {header.strip() for header in (reader.fieldnames or []) if header}
-        missing_headers = REQUIRED_CSV_COLUMNS - headers
-        if missing_headers:
-            raise HTTPException(
-                status_code=400,
-                detail="CSV is missing required columns: " + ", ".join(sorted(missing_headers)),
-            )
-
-        added = updated = skipped = 0
-        errors = []
-        seen_keys = set()
-
-        with get_connection() as conn:
-            for row_number, row in enumerate(reader, start=2):
-                try:
-                    source_term = _clean_optional(row.get("source_term"))
-                    target_language = _clean_optional(row.get("target_language"))
-                    translated_term = _clean_optional(row.get("translated_term"))
-                    subject = _clean_optional(row.get("subject"))
-                    notes = _clean_optional(row.get("notes"))
-
-                    reasons = []
-                    if not source_term or len(source_term) > 200:
-                        reasons.append("source_term must be 1-200 characters")
-                    if target_language not in ALLOWED_LANGUAGES:
-                        reasons.append("unsupported target_language")
-                    if not translated_term or len(translated_term) > 200:
-                        reasons.append("translated_term must be 1-200 characters")
-                    if len(subject) > 100:
-                        reasons.append("subject must be at most 100 characters")
-                    if len(notes) > 500:
-                        reasons.append("notes must be at most 500 characters")
-
-                    if reasons:
-                        skipped += 1
-                        errors.append({"row": row_number, "reasons": reasons})
-                        continue
-
-                    key = (source_term.casefold(), target_language, subject)
-                    if key in seen_keys:
-                        skipped += 1
-                        errors.append({"row": row_number, "reasons": ["duplicate row in CSV"]})
-                        continue
-                    seen_keys.add(key)
-
-                    existing = conn.execute(
-                        """
-                        SELECT id, translated_term, notes
-                        FROM glossary_terms
-                        WHERE lower(source_term) = lower(?)
-                          AND target_language = ?
-                          AND subject = ?
-                        """,
-                        (source_term, target_language, subject),
-                    ).fetchone()
-
-                    now = _now()
-                    if existing is None:
-                        conn.execute(
-                            """
-                            INSERT INTO glossary_terms
-                            (source_term, target_language, translated_term, subject, notes, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                source_term,
-                                target_language,
-                                translated_term,
-                                subject,
-                                notes,
-                                now,
-                                now,
-                            ),
-                        )
-                        added += 1
-                    elif (
-                        existing["translated_term"] == translated_term
-                        and existing["notes"] == notes
-                    ):
-                        skipped += 1
-                    else:
-                        conn.execute(
-                            """
-                            UPDATE glossary_terms
-                            SET translated_term = ?, notes = ?, updated_at = ?
-                            WHERE id = ?
-                            """,
-                            (translated_term, notes, now, existing["id"]),
-                        )
-                        updated += 1
-
-            conn.commit()
-
-        return {
-            "added": added,
-            "updated": updated,
-            "skipped": skipped,
-            "errors": errors,
-        }
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Failed to import glossary CSV")
-        raise HTTPException(status_code=500, detail="Could not import glossary CSV.")
-
+        logger.exception("Failed to export glossary CSV")
+        raise HTTPException(status_code=500, detail="Could not export glossary CSV.")
 
 @router.put("/{item_id}")
 async def update_glossary(item_id: int, item: GlossaryUpdate):
