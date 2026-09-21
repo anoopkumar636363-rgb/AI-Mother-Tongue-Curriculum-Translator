@@ -183,30 +183,94 @@ async def translate_text(
     }
 
 
+PDF_EXTRACTION_PROMPT = """
+Read this educational curriculum PDF and extract all curriculum text.
+
+Requirements:
+1. Read the entire document/page content, including scanned or image-based pages.
+2. Preserve the original reading order.
+3. Preserve headings, subheadings, numbered lists, bullet points, examples, formulas,
+   equations, units, symbols, tables, and important technical terms as accurately as possible.
+4. Do not summarize, translate, or add information.
+5. Return only the extracted curriculum text.
+6. If a small part is genuinely unreadable, write [unclear] rather than inventing content.
+""".strip()
+
+
+def extract_pdf_with_gemini(client: genai.Client, data: bytes):
+    """Use Gemini's native PDF understanding so scanned PDFs also work."""
+    uploaded_file = client.files.upload(
+        file=BytesIO(data),
+        config={"mime_type": "application/pdf"},
+    )
+
+    try:
+        response, used_model = generate_with_fallback(
+            client,
+            [PDF_EXTRACTION_PROMPT, uploaded_file],
+            config=types.GenerateContentConfig(temperature=0),
+        )
+        return (response.text or "").strip(), used_model
+    except Exception:
+        # The Gemini Files API keeps uploads temporarily; the backend does not
+        # need to persist the uploaded PDF locally.
+        raise
+
+
 @app.post("/api/extract-pdf")
 async def extract_pdf(file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a PDF file.")
 
     data = await file.read()
-    if len(data) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="PDF is too large. Keep it under 15 MB.")
 
+    # Gemini currently supports PDFs up to 50 MB.
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="PDF is too large. Keep it under 50 MB.")
+
+    if not data:
+        raise HTTPException(status_code=400, detail="The uploaded PDF is empty.")
+
+    client = get_client()
+
+    # First try local extraction because it is faster and free of an AI call
+    # for normal text PDFs. If there is no useful text, Gemini handles scanned
+    # and image-based PDFs using native document understanding.
     try:
         reader = PdfReader(BytesIO(data))
         pages = []
         for page in reader.pages:
             pages.append(page.extract_text() or "")
-
         text = "\n\n".join(pages).strip()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not read this PDF: {exc}") from exc
 
-    if not text:
+    if text:
+        if len(text) > MAX_CHARS:
+            text = text[:MAX_CHARS]
+            truncated = True
+        else:
+            truncated = False
+
+        return {
+            "filename": file.filename,
+            "text": text,
+            "truncated": truncated,
+            "characters": len(text),
+            "method": "pdf-text",
+        }
+
+    # No selectable text: send the actual PDF to Gemini instead of rejecting it.
+    try:
+        text, used_model = extract_pdf_with_gemini(client, data)
+    except Exception as exc:
         raise HTTPException(
-            status_code=422,
-            detail="No selectable text was found. This may be a scanned PDF. For this prototype, upload a clear page image instead.",
-        )
+            status_code=502,
+            detail=f"AI PDF extraction failed after trying {len(MODEL_LIST)} model(s): {exc}",
+        ) from exc
+
+    if not text:
+        raise HTTPException(status_code=422, detail="No readable curriculum text was found in the PDF.")
 
     if len(text) > MAX_CHARS:
         text = text[:MAX_CHARS]
@@ -219,6 +283,8 @@ async def extract_pdf(file: UploadFile = File(...)):
         "text": text,
         "truncated": truncated,
         "characters": len(text),
+        "method": "gemini-pdf",
+        "model": used_model,
     }
 
 
