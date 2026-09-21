@@ -655,3 +655,5 @@ td { color: #c4cce0; }
   .glossary-actions { width: 100%; }
   .glossary-actions > * { flex: 1; }
 }
+
+.glossary-suggest-btn { margin-top: 8px; }
