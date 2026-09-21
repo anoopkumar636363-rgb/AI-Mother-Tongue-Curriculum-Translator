@@ -97,6 +97,16 @@
         </button>
       </div>
 
+      <div id="loadingBar" class="loading-wrap hidden" aria-live="polite">
+        <div class="loading-top">
+          <span id="loadingLabel">Working...</span>
+          <span class="loading-dots">•••</span>
+        </div>
+        <div class="loading-track" role="progressbar" aria-label="Translation in progress">
+          <div class="loading-fill"></div>
+        </div>
+      </div>
+
       <div id="notice" class="notice hidden"></div>
     </section>
 
@@ -106,6 +116,6 @@
     </footer>
   </main>
 
-  <script src="/static/app.js?v=20260921-translation-brain"></script>
+  <script src="/static/app.js?v=20260921-translation-brain-loading"></script>
 </body>
 </html>
