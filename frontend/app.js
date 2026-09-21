@@ -367,7 +367,7 @@ const nextPage = document.getElementById("nextPage");
 const pageLabel = document.getElementById("pageLabel");
 const eventMeta = document.getElementById("eventMeta");
 const sourceBreakdown = document.getElementById("sourceBreakdown");
-let adminPasswordMemory = "";
+let adminPasswordMemory = ""; // Session-only; never persisted to storage.
 let adminPage = 1;
 let languageChart = null;
 let dailyChart = null;
@@ -400,27 +400,75 @@ function destroyCharts() {
 }
 
 function renderCharts(stats) {
-  if (!window.Chart) return;
+  if (!window.Chart) {
+    setDashboardError("Dashboard charts could not load. Please check your internet connection and refresh.");
+    return;
+  }
+
   destroyCharts();
-  languageChart = new Chart(document.getElementById("languageChart"), {
+
+  const languageCanvas = document.getElementById("languageChart");
+  const dailyCanvas = document.getElementById("dailyChart");
+
+  languageChart = new Chart(languageCanvas, {
     type: "bar",
     data: {
-      labels: stats.by_target_language.map(x => x.label),
-      datasets: [{ label: "Translations", data: stats.by_target_language.map(x => x.count), borderWidth: 0 }]
+      labels: (stats.by_target_language || []).map(x => x.label),
+      datasets: [{
+        label: "Translations",
+        data: (stats.by_target_language || []).map(x => x.count),
+        borderWidth: 0,
+        borderRadius: 6
+      }]
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-      scales: { x: { ticks: { color: "#7d88a3" }, grid: { color: "rgba(255,255,255,.05)" } },
-        y: { beginAtZero: true, ticks: { color: "#7d88a3", precision: 0 }, grid: { color: "rgba(255,255,255,.05)" } } } }
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: "y",
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: { color: "#7d88a3", precision: 0 },
+          grid: { color: "rgba(255,255,255,.05)" }
+        },
+        y: {
+          ticks: { color: "#c4cce0" },
+          grid: { display: false }
+        }
+      }
+    }
   });
-  dailyChart = new Chart(document.getElementById("dailyChart"), {
+
+  dailyChart = new Chart(dailyCanvas, {
     type: "line",
     data: {
-      labels: stats.daily.map(x => x.date),
-      datasets: [{ label: "Translations", data: stats.daily.map(x => x.count), tension: .25, fill: false, borderWidth: 2 }]
+      labels: (stats.daily || []).map(x => x.date),
+      datasets: [{
+        label: "Translations",
+        data: (stats.daily || []).map(x => x.count),
+        tension: 0.25,
+        fill: false,
+        borderWidth: 2,
+        pointRadius: 2
+      }]
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-      scales: { x: { ticks: { color: "#7d88a3", maxTicksLimit: 8 }, grid: { color: "rgba(255,255,255,.05)" } },
-        y: { beginAtZero: true, ticks: { color: "#7d88a3", precision: 0 }, grid: { color: "rgba(255,255,255,.05)" } } } }
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          ticks: { color: "#7d88a3", maxTicksLimit: 8 },
+          grid: { color: "rgba(255,255,255,.05)" }
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: "#7d88a3", precision: 0 },
+          grid: { color: "rgba(255,255,255,.05)" }
+        }
+      }
+    }
   });
 }
 
