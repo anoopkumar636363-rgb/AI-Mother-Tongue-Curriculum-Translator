@@ -85,6 +85,20 @@ pdfInput.addEventListener("change", async () => {
 
   selectedPdfFile = file;
   translatePdfBtn.disabled = false;
+
+  // Large PDFs are intended for the layout-preserving pipeline. Avoid
+  // loading 50-200 MB of text into the browser textarea.
+  const fileSizeMb = file.size / (1024 * 1024);
+  if (fileSizeMb > 50) {
+    showFileStatus(
+      `${file.name} • ${fileSizeMb.toFixed(1)} MB • large-PDF mode ready`
+    );
+    showNotice(
+      "Large PDF detected. Use “Translate PDF ↔ Keep Layout” — the translation brain will process it in batches."
+    );
+    return;
+  }
+
   showFileStatus("Reading PDF...");
   const form = new FormData();
   form.append("file", file);
@@ -118,7 +132,13 @@ translatePdfBtn.addEventListener("click", async () => {
   translatePdfBtn.disabled = true;
   const originalLabel = translatePdfBtn.textContent;
   translatePdfBtn.textContent = "Building PDF...";
-  showNotice("Translating PDF into " + language.value + " while preserving its layout...");
+  showFileStatus(
+    "🧠 Translation brain active • splitting PDF into batches • automatic model fallback enabled"
+  );
+  showNotice(
+    "Translating PDF into " + language.value +
+    " • multiple batches run concurrently • each batch uses the same model fallback chain..."
+  );
 
   const form = new FormData();
   form.append("file", selectedPdfFile);
@@ -149,7 +169,17 @@ translatePdfBtn.addEventListener("click", async () => {
     link.remove();
     URL.revokeObjectURL(url);
 
-    showNotice("Translated PDF downloaded • " + language.value + " • original layout preserved");
+    const pages = res.headers.get("X-PDF-Pages");
+    const batches = res.headers.get("X-Translation-Batches");
+    const workers = res.headers.get("X-Translation-Workers");
+
+    showNotice(
+      "Translated PDF downloaded • " + language.value +
+      " • layout preserved" +
+      (pages ? " • " + pages + " pages" : "") +
+      (batches ? " • " + batches + " AI batches" : "") +
+      (workers ? " • " + workers + " workers" : "")
+    );
   } catch (err) {
     showNotice(err.message, true);
   } finally {
