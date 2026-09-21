@@ -255,7 +255,9 @@
           </div>
           <button id="glossaryCancelBtn" class="ghost-btn hidden">Cancel edit</button>
         </div>
-        <div class="glossary-form-grid">
+        <form id="glossaryForm" class="glossary-form">
+          <input id="glossaryEditId" type="hidden" value="" />
+          <div class="glossary-form-grid">
           <div class="field">
             <label for="glossarySource">Source term</label>
             <input id="glossarySource" type="text" maxlength="200" placeholder="e.g. transistor" />
@@ -276,10 +278,11 @@
             <label for="glossaryNotes">Notes <span>(optional)</span></label>
             <textarea id="glossaryNotes" maxlength="500" rows="3" placeholder="Usage or teacher notes"></textarea>
           </div>
-        </div>
-        <div class="glossary-form-actions">
-          <button id="glossarySaveBtn" class="translate-btn">Add term →</button>
-        </div>
+          </div>
+          <div class="glossary-form-actions">
+            <button id="glossarySaveBtn" class="translate-btn" type="submit">Add term →</button>
+          </div>
+        </form>
       </div>
     </section>
 
