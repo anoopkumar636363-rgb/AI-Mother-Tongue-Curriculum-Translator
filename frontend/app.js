@@ -145,7 +145,7 @@ copyBtn.addEventListener("click", async () => {
 
 fetch("/api/health")
   .then(r => r.json())
-  .then(data => { health.textContent = `● API ready • ${data.model}`; })
+  .then(data => { health.textContent = `● API ready • ${data.models.join(" → ")}`; })
   .catch(() => { health.textContent = "● Start the FastAPI server"; });
 
 updateCount();
