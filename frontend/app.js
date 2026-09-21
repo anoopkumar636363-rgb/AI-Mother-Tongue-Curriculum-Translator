@@ -522,14 +522,14 @@ function escapeHtml(value) {
   }[char]));
 }
 
-function renderSourceBreakdown(items) {
+function renderPillBreakdown(container, items, emptyMessage = "No data yet") {
   if (!items.length) {
-    sourceBreakdown.textContent = "No translations yet";
-    sourceBreakdown.classList.add("empty-dashboard");
+    container.textContent = emptyMessage;
+    container.classList.add("empty-dashboard");
     return;
   }
-  sourceBreakdown.classList.remove("empty-dashboard");
-  sourceBreakdown.replaceChildren();
+  container.classList.remove("empty-dashboard");
+  container.replaceChildren();
   items.forEach(item => {
     const pill = document.createElement("div");
     pill.className = "source-pill";
@@ -538,8 +538,12 @@ function renderSourceBreakdown(items) {
     const count = document.createElement("strong");
     count.textContent = formatNumber(item.count);
     pill.append(label, count);
-    sourceBreakdown.appendChild(pill);
+    container.appendChild(pill);
   });
+}
+
+function renderSourceBreakdown(items) {
+  renderPillBreakdown(sourceBreakdown, items, "No translations yet");
 }
 
 async function fetchStats() {
@@ -568,6 +572,14 @@ async function loadDashboard() {
 
     renderCharts(stats);
     renderSourceBreakdown(stats.by_source_type || []);
+
+    const glossaryCount = document.getElementById("statGlossary");
+    if (glossaryCount) glossaryCount.textContent = formatNumber(stats.glossary_terms);
+
+    const glossaryLanguageBreakdown = document.getElementById("glossaryLanguageBreakdown");
+    if (glossaryLanguageBreakdown) {
+      renderPillBreakdown(glossaryLanguageBreakdown, stats.glossary_by_language || [], "No glossary terms yet");
+    }
 
     const currentLanguage = eventLanguage.value;
     eventLanguage.innerHTML = '<option value="">All languages</option>' +
@@ -881,6 +893,8 @@ const glossarySubjectInput = document.getElementById("glossarySubject");
 const glossarySaveBtn = document.getElementById("glossarySaveBtn");
 const glossaryCancelBtn = document.getElementById("glossaryCancelBtn");
 
+let glossaryLoadedItems = [];
+
 let glossaryPage = 1;
 let glossaryTotalPages = 0;
 
@@ -932,6 +946,43 @@ function setGlossaryError(message) {
   el.classList.toggle("hidden", !message);
 }
 
+function renderGlossaryRows(items) {
+  glossaryBody.replaceChildren();
+  glossaryEmpty.classList.toggle("hidden", items.length !== 0);
+  items.forEach(item => {
+    const tr = document.createElement("tr");
+    [item.source_term, item.target_language, item.translated_term, item.subject || "—"].forEach(value => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    const actions = document.createElement("td");
+    actions.className = "glossary-actions-cell";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "glossary-small-btn";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => startGlossaryEdit(item));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "glossary-small-btn danger-btn";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", () => deleteGlossary(item.id));
+    actions.append(edit, remove);
+    tr.appendChild(actions);
+    glossaryBody.appendChild(tr);
+  });
+}
+
+function filterGlossaryRows() {
+  const query = glossarySearch.value.trim().toLowerCase();
+  const filtered = !query ? glossaryLoadedItems : glossaryLoadedItems.filter(item =>
+    item.source_term.toLowerCase().includes(query) ||
+    item.translated_term.toLowerCase().includes(query)
+  );
+  renderGlossaryRows(filtered);
+}
+
 function loadGlossarySubjects(items) {
   const current = glossarySubjectFilter.value;
   glossarySubjectFilter.innerHTML = '<option value="">All subjects</option>';
@@ -954,31 +1005,8 @@ async function loadGlossary() {
     });
     const data = await glossaryRequest("/api/glossary?" + params.toString());
     const items = data.items || [];
-    glossaryBody.replaceChildren();
-    glossaryEmpty.classList.toggle("hidden", items.length !== 0);
-    items.forEach(item => {
-      const tr = document.createElement("tr");
-      [item.source_term, item.target_language, item.translated_term, item.subject || "—"].forEach(value => {
-        const td = document.createElement("td");
-        td.textContent = value;
-        tr.appendChild(td);
-      });
-      const actions = document.createElement("td");
-      actions.className = "glossary-actions-cell";
-      const edit = document.createElement("button");
-      edit.type = "button";
-      edit.className = "glossary-small-btn";
-      edit.textContent = "Edit";
-      edit.addEventListener("click", () => startGlossaryEdit(item));
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "glossary-small-btn danger-btn";
-      remove.textContent = "Delete";
-      remove.addEventListener("click", () => deleteGlossary(item.id));
-      actions.append(edit, remove);
-      tr.appendChild(actions);
-      glossaryBody.appendChild(tr);
-    });
+    glossaryLoadedItems = items;
+    filterGlossaryRows();
     glossaryTotalPages = 1;
     glossaryPageLabel.textContent = items.length ? "Page 1 of 1" : "No pages";
     glossaryPrev.disabled = true;
@@ -1051,9 +1079,25 @@ glossaryForm.addEventListener("submit", async event => {
 });
 
 glossaryCancelBtn.addEventListener("click", resetGlossaryForm);
-glossarySearchBtn.addEventListener("click", () => loadGlossary());
-glossarySearch.addEventListener("keydown", event => { if (event.key === "Enter") loadGlossary(); });
+glossarySearchBtn.addEventListener("click", filterGlossaryRows);
+glossarySearch.addEventListener("input", filterGlossaryRows);
+glossarySearch.addEventListener("keydown", event => { if (event.key === "Enter") filterGlossaryRows(); });
 [glossaryLanguageFilter, glossarySubjectFilter].forEach(select => select.addEventListener("change", loadGlossary));
+
+quickAddGlossaryBtn.addEventListener("click", () => {
+  const selectedText = sourceText.value.slice(sourceText.selectionStart, sourceText.selectionEnd).trim();
+  if (!selectedText) {
+    showNotice("Select text in the curriculum input first.", true);
+    return;
+  }
+  syncGlossaryLanguages();
+  resetGlossaryForm();
+  glossarySource.value = selectedText;
+  glossaryTargetLanguage.value = language.value;
+  glossarySubjectInput.value = subject.value.trim();
+  showTab("glossaryView");
+  glossarySource.focus();
+});
 
 // Admin login
 loginBtn.addEventListener("click", async () => {
