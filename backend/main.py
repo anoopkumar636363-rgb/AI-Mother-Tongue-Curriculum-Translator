@@ -1,4 +1,5 @@
 import os
+import re
 from io import BytesIO
 
 from dotenv import load_dotenv
@@ -12,8 +13,22 @@ from pypdf import PdfReader
 load_dotenv()
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+# The app tries these models in order. If one is unavailable or temporarily
+# rate-limited, it automatically tries the next one.
+DEFAULT_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+]
+MODEL_LIST = [
+    model.strip()
+    for model in os.getenv("GEMINI_MODELS", ",".join(DEFAULT_MODELS)).split(",")
+    if model.strip()
+]
 MAX_CHARS = 30000
+
 ALLOWED_LANGUAGES = {
     "Kannada": "kn",
     "Hindi": "hi",
@@ -29,7 +44,7 @@ ALLOWED_LANGUAGES = {
 
 app = FastAPI(
     title="AI Mother Tongue Curriculum Translator",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
@@ -42,6 +57,52 @@ def get_client() -> genai.Client:
             detail="GEMINI_API_KEY is missing. Add it to your .env file.",
         )
     return genai.Client(api_key=API_KEY)
+
+
+def is_retryable_model_error(exc: Exception) -> bool:
+    """Return True for model unavailable/rate-limit/server errors."""
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "404",
+            "not_found",
+            "not found",
+            "429",
+            "resource_exhausted",
+            "rate limit",
+            "500",
+            "502",
+            "503",
+            "504",
+            "unavailable",
+        )
+    )
+
+
+def generate_with_fallback(client: genai.Client, contents, config=None):
+    """Try each configured Gemini model until one succeeds."""
+    errors = []
+
+    for model in MODEL_LIST:
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config,
+            )
+            return response, model
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+
+            # Invalid request/authentication errors should be shown immediately.
+            if not is_retryable_model_error(exc):
+                raise
+
+    joined = "\n".join(errors)
+    raise RuntimeError(
+        "All configured Gemini models failed.\n" + joined
+    )
 
 
 def build_translation_prompt(text: str, target_language: str) -> str:
@@ -71,7 +132,10 @@ async def home():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "model": MODEL}
+    return {
+        "status": "ok",
+        "models": MODEL_LIST,
+    }
 
 
 @app.post("/api/translate")
@@ -96,16 +160,17 @@ async def translate_text(
     client = get_client()
 
     try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=build_translation_prompt(text, target_language),
-            config=types.GenerateContentConfig(
-                temperature=0.2,
-            ),
+        response, used_model = generate_with_fallback(
+            client,
+            build_translation_prompt(text, target_language),
+            config=types.GenerateContentConfig(temperature=0.2),
         )
         translated = (response.text or "").strip()
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"AI translation failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI translation failed after trying {len(MODEL_LIST)} model(s): {exc}",
+        ) from exc
 
     if not translated:
         raise HTTPException(status_code=502, detail="The AI returned an empty translation.")
@@ -114,7 +179,7 @@ async def translate_text(
         "source_text": text,
         "translated_text": translated,
         "target_language": target_language,
-        "model": MODEL,
+        "model": used_model,
     }
 
 
@@ -178,9 +243,9 @@ instead of inventing content.
 """.strip()
 
     try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=[
+        response, used_model = generate_with_fallback(
+            client,
+            [
                 types.Part.from_bytes(data=data, mime_type=file.content_type),
                 prompt,
             ],
@@ -188,7 +253,10 @@ instead of inventing content.
         )
         text = (response.text or "").strip()
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Image OCR failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"Image OCR failed after trying {len(MODEL_LIST)} model(s): {exc}",
+        ) from exc
 
     if not text:
         raise HTTPException(status_code=422, detail="No readable text was found in the image.")
@@ -200,4 +268,5 @@ instead of inventing content.
         "filename": file.filename,
         "text": text,
         "characters": len(text),
+        "model": used_model,
     }
