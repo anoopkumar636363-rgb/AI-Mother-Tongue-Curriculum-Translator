@@ -158,29 +158,47 @@ async def translate_text(
         )
 
     client = get_client()
+    prompt = build_translation_prompt(text, target_language)
+    config = types.GenerateContentConfig(temperature=0.2)
 
-    try:
-        response, used_model = generate_with_fallback(
-            client,
-            build_translation_prompt(text, target_language),
-            config=types.GenerateContentConfig(temperature=0.2),
-        )
-        translated = (response.text or "").strip()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"AI translation failed after trying {len(MODEL_LIST)} model(s): {exc}",
-        ) from exc
+    def stream_translation():
+        errors = []
 
-    if not translated:
-        raise HTTPException(status_code=502, detail="The AI returned an empty translation.")
+        for model in MODEL_LIST:
+            try:
+                stream = client.models.generate_content_stream(
+                    model=model,
+                    contents=prompt,
+                    config=config,
+                )
 
-    return {
-        "source_text": text,
-        "translated_text": translated,
-        "target_language": target_language,
-        "model": used_model,
-    }
+                sent = False
+                for chunk in stream:
+                    chunk_text = chunk.text or ""
+                    if chunk_text:
+                        sent = True
+                        yield chunk_text
+
+                if sent:
+                    return
+
+                errors.append(f"{model}: empty response")
+
+            except Exception as exc:
+                errors.append(f"{model}: {exc}")
+                if not is_retryable_model_error(exc):
+                    break
+
+        raise RuntimeError("Streaming translation failed. Tried: " + " | ".join(errors))
+
+    return StreamingResponse(
+        stream_translation(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 PDF_EXTRACTION_PROMPT = """
