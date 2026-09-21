@@ -354,6 +354,52 @@ async def translate_text(
     )
 
 
+@app.post("/api/glossary/suggest")
+async def suggest_glossary_term(
+    source_term: str = Form(...),
+    target_language: str = Form(...),
+    subject: str = Form(""),
+):
+    source_term = source_term.strip()
+    if not source_term:
+        raise HTTPException(status_code=400, detail="Enter a source term first.")
+    if len(source_term) > 200:
+        raise HTTPException(status_code=400, detail="Term is too long (max 200 characters).")
+    validate_target_language(target_language)
+    client = get_translation_client()
+    subject_hint = f" The subject area is: {subject.strip()}." if subject.strip() else ""
+    prompt = (
+        f"Translate this educational term into {target_language}.{subject_hint}\n"
+        "Return ONLY the translated term. No quotes, no explanation, no romanization.\n"
+        f"Term: {source_term}"
+    )
+    errors = []
+    for model in MODEL_LIST:
+        try:
+            config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_level=get_thinking_level(model))
+            )
+            response = await client.aio.models.generate_content(
+                model=model, contents=prompt, config=config
+            )
+            raw = (response.text or "").strip()
+            suggestion = raw.splitlines()[0].strip().strip("\"'“”‘’ ") if raw else ""
+            if not suggestion:
+                raise ValueError("Gemini returned an empty suggestion.")
+            return {
+                "source_term": source_term,
+                "target_language": target_language,
+                "translated_term": suggestion,
+                "model": model,
+            }
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+            logger.warning("Glossary suggestion failed with %s: %s", model, exc)
+    raise HTTPException(
+        status_code=502,
+        detail="Could not suggest a translation. Tried: " + " | ".join(errors),
+    )
+
 PDF_EXTRACTION_PROMPT = """
 Read this educational curriculum PDF and extract all curriculum text.
 
