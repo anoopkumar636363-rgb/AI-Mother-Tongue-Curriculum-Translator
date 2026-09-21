@@ -502,3 +502,156 @@ td { color: #c4cce0; }
   .library-detail-actions > * { flex: 1; }
   .library-text-panel pre, .library-text-panel textarea { min-height: 300px; }
 }
+
+
+/* Translation glossary */
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 4px;
+  color: #c4cce0;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.checkbox-field input {
+  width: 16px;
+  height: 16px;
+  accent-color: #7564ff;
+}
+.glossary-status {
+  margin: -6px 22px 20px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(117,100,255,.07);
+  color: #aeb8d3;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.glossary-status.warning {
+  background: rgba(255,190,80,.08);
+  color: #ffd48b;
+}
+.glossary-view { padding: 24px; }
+.glossary-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  padding-bottom: 22px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+.glossary-head h2 { font-size: 24px; margin-top: 12px; }
+.glossary-head p { color: #717c97; margin: 6px 0 0; font-size: 13px; }
+.glossary-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.glossary-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.glossary-import-summary {
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid rgba(98,215,180,.18);
+  border-radius: 12px;
+  background: rgba(98,215,180,.055);
+  color: #b8d9d0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.glossary-toolbar {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) minmax(220px, 2fr) auto;
+  gap: 9px;
+  margin: 20px 0 14px;
+}
+.glossary-toolbar input,
+.glossary-toolbar select,
+.glossary-form-grid input,
+.glossary-form-grid select,
+.glossary-form-grid textarea,
+.glossary-edit-input {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px;
+  background: #090d17;
+  color: #fff;
+  outline: none;
+  padding: 10px 11px;
+  font: inherit;
+}
+.glossary-toolbar input:focus,
+.glossary-toolbar select:focus,
+.glossary-form-grid input:focus,
+.glossary-form-grid select:focus,
+.glossary-form-grid textarea:focus,
+.glossary-edit-input:focus {
+  border-color: rgba(141,123,255,.65);
+  box-shadow: 0 0 0 3px rgba(141,123,255,.08);
+}
+.glossary-table-wrap { overflow-x: auto; }
+.glossary-table { min-width: 900px; }
+.glossary-table td { vertical-align: top; white-space: normal; max-width: 240px; }
+.glossary-table td:nth-child(1),
+.glossary-table td:nth-child(3) { font-weight: 800; color: #e1e7f5; }
+.glossary-actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+.glossary-small-btn {
+  border: 1px solid rgba(255,255,255,.1);
+  background: rgba(255,255,255,.035);
+  color: #aeb8d3;
+  border-radius: 8px;
+  padding: 7px 9px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+}
+.glossary-small-btn:hover { border-color: rgba(117,100,255,.45); color: #fff; }
+.glossary-form-card {
+  margin-top: 20px;
+  padding: 18px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 16px;
+  background: rgba(255,255,255,.025);
+}
+.glossary-form-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.glossary-form-head h3 { margin: 0; font-size: 15px; }
+.glossary-form-head p { margin: 5px 0 0; color: #717c97; font-size: 11px; }
+.glossary-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.glossary-notes-field { grid-column: 1 / -1; }
+.glossary-form-grid textarea { resize: vertical; }
+.glossary-form-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.glossary-form-actions .translate-btn { min-width: 130px; }
+.glossary-row-error { color: #ff9ba7; font-size: 10px; margin-top: 5px; }
+@media (max-width: 900px) {
+  .glossary-head { flex-direction: column; }
+  .glossary-actions { justify-content: flex-start; }
+  .glossary-toolbar { grid-template-columns: 1fr 1fr; }
+  .glossary-toolbar input { grid-column: 1 / -1; }
+  .glossary-form-grid { grid-template-columns: 1fr; }
+  .glossary-notes-field { grid-column: auto; }
+}
+@media (max-width: 520px) {
+  .glossary-view { padding: 16px; }
+  .glossary-toolbar { grid-template-columns: 1fr; }
+  .glossary-toolbar input { grid-column: auto; }
+  .glossary-actions { width: 100%; }
+  .glossary-actions > * { flex: 1; }
+}
