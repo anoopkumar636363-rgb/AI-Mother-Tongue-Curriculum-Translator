@@ -1077,7 +1077,14 @@ def build_text_pdf(payload: PdfExportRequest) -> bytes:
         ".meta { font-size: 9pt; color: #666666; margin-bottom: 14pt; }\n"
         "p { margin: 0 0 8pt 0; }\n"
     )
-    css = font_css + "\n" + base_css
+    family = FONT_FILES[payload.target_language][1]
+    fallback_css = ""
+    if payload.target_language != "English":
+        fallback_css = (
+            '@font-face { font-family: "NotoSans"; src: url("NotoSans.ttf"); }\n'
+            '* { font-family: "%s", "NotoSans"; }\n' % family
+        )
+    css = font_css + "\n" + fallback_css + base_css
     story = pymupdf.Story(html=html, user_css=css, archive=archive)
     buffer = BytesIO()
     writer = pymupdf.DocumentWriter(buffer)
