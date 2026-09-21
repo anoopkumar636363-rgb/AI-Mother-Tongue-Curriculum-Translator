@@ -43,6 +43,39 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_translation_events_language "
             "ON translation_events(target_language)"
         )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS translations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                subject TEXT,
+                grade TEXT,
+                target_language TEXT NOT NULL,
+                source_type TEXT NOT NULL CHECK(source_type IN ('text','pdf','image')),
+                original_text TEXT NOT NULL,
+                translated_text TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_translations_target_language "
+            "ON translations(target_language)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_translations_subject "
+            "ON translations(subject)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_translations_grade "
+            "ON translations(grade)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_translations_created_at "
+            "ON translations(created_at)"
+        )
         conn.commit()
 
 
