@@ -3,7 +3,53 @@ const language = document.getElementById("language");
 const translateBtn = document.getElementById("translateBtn");
 const output = document.getElementById("output");
 const copyBtn = document.getElementById("copyBtn");
+
+
+async function downloadPdf({ text, targetLanguage, title, subject, grade, reviewed }) {
+  const res = await fetch("/api/export-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, target_language: targetLanguage, title, subject, grade, reviewed: !!reviewed }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const d = data.detail;
+    throw new Error(Array.isArray(d) ? d.map(x => x.msg).join(", ") : (d || "Could not create the PDF."));
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/i);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = match ? match[1] : "translation.pdf";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+
+downloadPdfBtn.addEventListener("click", async () => {
+  const text = output.textContent.trim();
+  if (!text || output.classList.contains("empty")) return;
+
+  try {
+    await downloadPdf({
+      text,
+      targetLanguage: language.value,
+      title: saveTitle.value.trim() || "Translated curriculum",
+      subject: subject.value.trim(),
+      grade: grade.value.trim(),
+      reviewed: false,
+    });
+    showNotice("PDF downloaded.");
+  } catch (err) {
+    showNotice(err.message, true);
+  }
+});
 const downloadBtn = document.getElementById("downloadBtn");
+const downloadPdfBtn = document.getElementById("downloadPdfBtn");
 const saveBtn = document.getElementById("saveBtn");
 const saveTitle = document.getElementById("saveTitle");
 const charCount = document.getElementById("charCount");
