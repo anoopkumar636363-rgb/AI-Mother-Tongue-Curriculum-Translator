@@ -392,6 +392,7 @@ const tabs = document.querySelectorAll(".tab-btn");
 const translateView = document.getElementById("translateView");
 const libraryView = document.getElementById("libraryView");
 const dashboardView = document.getElementById("dashboardView");
+const glossaryView = document.getElementById("glossaryView");
 
 const libraryError = document.getElementById("libraryError");
 const libraryListView = document.getElementById("libraryListView");
@@ -465,6 +466,9 @@ function showTab(id) {
   translateView.classList.toggle("hidden", id !== "translateView");
   libraryView.classList.toggle("hidden", id !== "libraryView");
   dashboardView.classList.toggle("hidden", id !== "dashboardView");
+  glossaryView.classList.toggle("hidden", id !== "glossaryView");
+
+  if (id === "glossaryView") loadGlossary();
 
   if (id === "libraryView") {
     loadLibraryFilters();
