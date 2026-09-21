@@ -896,6 +896,8 @@ const glossaryTranslated = document.getElementById("glossaryTranslated");
 const glossarySubjectInput = document.getElementById("glossarySubject");
 const glossarySaveBtn = document.getElementById("glossarySaveBtn");
 const glossaryCancelBtn = document.getElementById("glossaryCancelBtn");
+const glossarySuggestBtn = document.getElementById("glossarySuggestBtn");
+const quickAddGlossaryBtn = document.getElementById("quickAddGlossaryBtn");
 
 let glossaryLoadedItems = [];
 
@@ -1094,6 +1096,32 @@ glossaryForm.addEventListener("submit", async event => {
   }
 });
 
+async function suggestGlossaryTranslation() {
+  const term = glossarySource.value.trim();
+  if (!term) {
+    setGlossaryError("Enter or select a source term first.");
+    return;
+  }
+  setGlossaryError("");
+  glossaryTranslated.value = "";
+  glossaryTranslated.placeholder = "Translating…";
+  glossarySuggestBtn.disabled = true;
+  try {
+    const form = new FormData();
+    form.append("source_term", term);
+    form.append("target_language", glossaryTargetLanguage.value);
+    form.append("subject", glossarySubjectInput.value.trim());
+    const data = await glossaryRequest("/api/glossary/suggest", { method: "POST", body: form });
+    glossaryTranslated.value = data.translated_term;
+  } catch (err) {
+    setGlossaryError(err.message);
+  } finally {
+    glossaryTranslated.placeholder = "Exact translated term";
+    glossarySuggestBtn.disabled = false;
+  }
+}
+glossarySuggestBtn.addEventListener("click", suggestGlossaryTranslation);
+
 language.addEventListener("change", () => {
   if (!glossaryEditId.value) glossaryTargetLanguage.value = language.value;
 });
@@ -1103,7 +1131,7 @@ glossarySearch.addEventListener("input", filterGlossaryRows);
 glossarySearch.addEventListener("keydown", event => { if (event.key === "Enter") filterGlossaryRows(); });
 [glossaryLanguageFilter, glossarySubjectFilter].forEach(select => select.addEventListener("change", loadGlossary));
 
-quickAddGlossaryBtn.addEventListener("click", () => {
+quickAddGlossaryBtn.addEventListener("click", async () => {
   const selectedText = sourceText.value.slice(sourceText.selectionStart, sourceText.selectionEnd).trim();
   if (!selectedText) {
     showNotice("Select text in the curriculum input first.", true);
@@ -1115,6 +1143,7 @@ quickAddGlossaryBtn.addEventListener("click", () => {
   glossaryTargetLanguage.value = language.value;
   glossarySubjectInput.value = subject.value.trim();
   showTab("glossaryView");
+  await suggestGlossaryTranslation();
   glossarySource.focus();
 });
 
