@@ -12,12 +12,16 @@
 
   <main class="container">
     <header class="hero">
+      <nav class="top-tabs" aria-label="Primary">
+        <button class="tab-btn active" data-tab="translateView">Translate</button>
+        <button class="tab-btn" data-tab="dashboardView">Dashboard</button>
+      </nav>
       <div class="badge">✦ AI EDUCATION PROTOTYPE</div>
       <h1>MotherTongue <span>AI</span></h1>
       <p>Turn curriculum into the language students understand best.</p>
     </header>
 
-    <section class="card">
+    <section id="translateView" class="view active-view card">
       <div class="step-row">
         <div class="step active"><span>1</span><div><b>Add curriculum</b><small>PDF, image, or text</small></div></div>
         <div class="line"></div>
@@ -91,6 +95,15 @@
           </select>
         </div>
 
+        <div class="field small-field">
+          <label for="subject">Subject <span>(optional)</span></label>
+          <input id="subject" type="text" placeholder="e.g. Physics" maxlength="100" />
+        </div>
+        <div class="field small-field">
+          <label for="grade">Grade <span>(optional)</span></label>
+          <input id="grade" type="text" placeholder="e.g. Grade 10" maxlength="50" />
+        </div>
+
         <button id="translateBtn" class="translate-btn">
           <span>Translate with AI</span>
           <span>→</span>
@@ -110,12 +123,97 @@
       <div id="notice" class="notice hidden"></div>
     </section>
 
+    <section id="dashboardView" class="view dashboard-view card hidden">
+      <div class="dashboard-head">
+        <div>
+          <div class="badge">✦ TEACHER / ADMIN</div>
+          <h2>Translation Dashboard</h2>
+          <p>Usage, performance, and recent translation activity.</p>
+        </div>
+        <div class="dashboard-actions hidden" id="dashboardActions">
+          <select id="daysSelect" aria-label="Date range">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button id="csvBtn" class="ghost-btn">Download CSV</button>
+          <button id="logoutBtn" class="ghost-btn">Log out</button>
+        </div>
+      </div>
+
+      <div id="adminLogin" class="admin-login">
+        <div class="login-box">
+          <h3>Admin access</h3>
+          <p>Enter the dashboard password. It stays in memory only.</p>
+          <div class="login-row">
+            <input id="adminPassword" type="password" autocomplete="current-password" placeholder="Admin password" />
+            <button id="loginBtn" class="translate-btn">Sign in →</button>
+          </div>
+          <div id="adminError" class="admin-error hidden"></div>
+        </div>
+      </div>
+
+      <div id="dashboardContent" class="hidden">
+        <div id="dashboardError" class="dashboard-error hidden"></div>
+        <div class="stats-grid">
+          <div class="stat-card"><span>Total translations</span><strong id="statTotal">0</strong></div>
+          <div class="stat-card"><span>Success rate</span><strong id="statSuccess">0%</strong></div>
+          <div class="stat-card"><span>Characters translated</span><strong id="statChars">0</strong></div>
+          <div class="stat-card"><span>Average time</span><strong id="statAvg">0 ms</strong></div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card"><h3>Translations by language</h3><canvas id="languageChart"></canvas></div>
+          <div class="chart-card"><h3>Translations per day</h3><canvas id="dailyChart"></canvas></div>
+        </div>
+
+        <div class="chart-card source-card">
+          <h3>Source type</h3>
+          <div id="sourceBreakdown" class="source-breakdown"></div>
+        </div>
+
+        <div class="events-card">
+          <div class="events-head">
+            <div><h3>Recent events</h3><p id="eventMeta">Showing recent activity.</p></div>
+            <div class="filters">
+              <select id="eventLanguage"><option value="">All languages</option></select>
+              <select id="eventSource">
+                <option value="">All sources</option>
+                <option value="text">Text</option>
+                <option value="pdf">PDF</option>
+                <option value="pdf-layout">PDF layout</option>
+                <option value="image">Image</option>
+              </select>
+              <select id="eventSuccess">
+                <option value="">All results</option>
+                <option value="1">Success</option>
+                <option value="0">Failure</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Source</th><th>Language</th><th>Subject</th><th>Grade</th><th>Chars</th><th>Model</th><th>Time</th><th>Status</th></tr></thead>
+              <tbody id="eventsBody"></tbody>
+            </table>
+            <div id="emptyEvents" class="empty-dashboard hidden">No translations yet</div>
+          </div>
+          <div class="pager">
+            <button id="prevPage" class="ghost-btn">← Previous</button>
+            <span id="pageLabel">Page 1</span>
+            <button id="nextPage" class="ghost-btn">Next →</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <footer>
       <span>Built for rapid prototyping • Always review AI translations before classroom use.</span>
       <span id="health">● Checking API...</span>
     </footer>
   </main>
 
-  <script src="/static/app.js?v=20260921-translation-brain-loading"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.min.js"></script>
+  <script src="/static/app.js?v=20260921-dashboard"></script>
 </body>
 </html>
