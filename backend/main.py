@@ -98,7 +98,9 @@ app = FastAPI(
     version="1.3.0",
 )
 
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 app.include_router(admin_router)
 from backend.routes_library import router as library_router
 from backend.routes_glossary import router as glossary_router
@@ -245,14 +247,25 @@ CURRICULUM:
 
 @app.get("/")
 async def home():
-    return FileResponse("frontend/index.html")
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
 @app.get("/api/health")
 async def health():
+    has_gemini_key = bool(
+        TRANSLATION_API_KEY
+        or PDF_API_KEY
+        or os.getenv("GEMINI_API_KEY", "").strip()
+    )
     return {
         "status": "ok",
         "models": MODEL_LIST,
+        "gemini_configured": has_gemini_key,
+        "message": (
+            ""
+            if has_gemini_key
+            else "Gemini API key is not configured. Add GEMINI_API_KEY to .env."
+        ),
     }
 
 
