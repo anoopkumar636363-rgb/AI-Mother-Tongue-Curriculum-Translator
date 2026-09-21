@@ -374,6 +374,15 @@ const tabs = document.querySelectorAll(".tab-btn");
 const translateView = document.getElementById("translateView");
 const libraryView = document.getElementById("libraryView");
 const dashboardView = document.getElementById("dashboardView");
+const glossaryView = document.getElementById("glossaryView");
+const glossaryError = document.getElementById("glossaryError");
+const glossarySource = document.getElementById("glossarySource");
+const glossaryTargetLanguage = document.getElementById("glossaryTargetLanguage");
+const glossaryTranslated = document.getElementById("glossaryTranslated");
+const glossarySubject = document.getElementById("glossarySubject");
+const glossaryAddBtn = document.getElementById("glossaryAddBtn");
+const glossaryBody = document.getElementById("glossaryBody");
+const glossaryEmpty = document.getElementById("glossaryEmpty");
 
 const libraryError = document.getElementById("libraryError");
 const libraryListView = document.getElementById("libraryListView");
@@ -442,16 +451,109 @@ function adminHeaders() {
   return { "X-Admin-Password": adminPasswordMemory };
 }
 
+
+function setGlossaryError(message) {
+  glossaryError.textContent = message;
+  glossaryError.classList.toggle("hidden", !message);
+}
+
+async function glossaryRequest(url, options = {}) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "Glossary request failed.");
+  return data;
+}
+
+async function loadGlossary() {
+  setGlossaryError("");
+  try {
+    const data = await glossaryRequest("/api/glossary");
+    const items = data.items || [];
+    glossaryBody.replaceChildren();
+    glossaryEmpty.classList.toggle("hidden", items.length !== 0);
+
+    items.forEach(item => {
+      const row = document.createElement("tr");
+      [item.source_term, item.target_language, item.translated_term, item.subject || "—"].forEach(value => {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+
+      const actions = document.createElement("td");
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "ghost-btn danger-btn";
+      remove.textContent = "Delete";
+      remove.addEventListener("click", async () => {
+        if (!window.confirm("Delete this glossary term?")) return;
+        try {
+          await glossaryRequest("/api/glossary/" + encodeURIComponent(item.id), { method: "DELETE" });
+          await loadGlossary();
+          showNotice("Glossary term deleted.");
+        } catch (err) {
+          setGlossaryError(err.message);
+        }
+      });
+      actions.appendChild(remove);
+      row.appendChild(actions);
+      glossaryBody.appendChild(row);
+    });
+  } catch (err) {
+    setGlossaryError(err.message);
+  }
+}
+
+glossaryAddBtn.addEventListener("click", async () => {
+  const sourceTerm = glossarySource.value.trim();
+  const translatedTerm = glossaryTranslated.value.trim();
+  const targetLanguage = glossaryTargetLanguage.value.trim();
+  const subjectValue = glossarySubject.value.trim();
+
+  if (!sourceTerm || !translatedTerm || !targetLanguage) {
+    setGlossaryError("Source term, translated term, and language are required.");
+    return;
+  }
+
+  glossaryAddBtn.disabled = true;
+  setGlossaryError("");
+
+  try {
+    await glossaryRequest("/api/glossary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_term: sourceTerm,
+        target_language: targetLanguage,
+        translated_term: translatedTerm,
+        subject: subjectValue
+      })
+    });
+
+    glossarySource.value = "";
+    glossaryTranslated.value = "";
+    glossarySubject.value = "";
+    await loadGlossary();
+    showNotice("Glossary term added.");
+  } catch (err) {
+    setGlossaryError(err.message);
+  } finally {
+    glossaryAddBtn.disabled = false;
+  }
+});
+
 function showTab(id) {
   tabs.forEach(tab => tab.classList.toggle("active", tab.dataset.tab === id));
   translateView.classList.toggle("hidden", id !== "translateView");
   libraryView.classList.toggle("hidden", id !== "libraryView");
+  glossaryView.classList.toggle("hidden", id !== "glossaryView");
   dashboardView.classList.toggle("hidden", id !== "dashboardView");
 
   if (id === "libraryView") {
     loadLibraryFilters();
     if (!libraryItem) loadLibrary();
   }
+  if (id === "glossaryView") loadGlossary();
   if (id === "dashboardView" && adminPasswordMemory) loadDashboard();
 }
 
