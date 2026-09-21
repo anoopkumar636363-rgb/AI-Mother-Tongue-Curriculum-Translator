@@ -1,5 +1,7 @@
+import asyncio
 import json
 import os
+import random
 import re
 from html import escape as html_escape
 from io import BytesIO
@@ -32,9 +34,16 @@ MODEL_LIST = [
     if model.strip()
 ]
 MAX_CHARS = 30000
-MAX_LAYOUT_PDF_MB = 500
-MAX_LAYOUT_PDF_PAGES = 20
-MAX_LAYOUT_PDF_CHARS = 50000
+MAX_LAYOUT_PDF_MB = 200
+
+# Large-PDF translation brain settings. The PDF itself stays local; only
+# small text batches are sent to Gemini. Each batch uses the SAME fallback
+# chain, so models are failover choices rather than fixed assignments.
+LAYOUT_WORKERS = max(1, int(os.getenv("LAYOUT_WORKERS", "4")))
+LAYOUT_BATCH_CHARS = max(4000, int(os.getenv("LAYOUT_BATCH_CHARS", "12000")))
+LAYOUT_MODEL_RETRIES = max(1, int(os.getenv("LAYOUT_MODEL_RETRIES", "2")))
+LAYOUT_REQUEUE_LIMIT = max(1, int(os.getenv("LAYOUT_REQUEUE_LIMIT", "2")))
+LAYOUT_REQUEST_TIMEOUT = max(30, int(os.getenv("LAYOUT_REQUEST_TIMEOUT", "120")))
 
 ALLOWED_LANGUAGES = {
     "Kannada": "kn",
@@ -51,7 +60,7 @@ ALLOWED_LANGUAGES = {
 
 app = FastAPI(
     title="AI Mother Tongue Curriculum Translator",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
@@ -257,9 +266,8 @@ async def extract_pdf(file: UploadFile = File(...)):
 
     data = await file.read()
 
-    # Gemini currently supports PDFs up to 50 MB.
-    if len(data) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="PDF is too large. Keep it under 50 MB.")
+    if len(data) > MAX_LAYOUT_PDF_MB * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"PDF is too large. Keep it under {MAX_LAYOUT_PDF_MB} MB.")
 
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded PDF is empty.")
@@ -293,7 +301,18 @@ async def extract_pdf(file: UploadFile = File(...)):
             "method": "pdf-text",
         }
 
-    # No selectable text: send the actual PDF to Gemini instead of rejecting it.
+    # No selectable text: Gemini must receive the actual PDF, so the native
+    # Gemini PDF limit still applies to this scanned-PDF fallback.
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This PDF is over 50 MB and has no selectable text. "
+                "The layout-preserving translator works locally with large text PDFs, "
+                "but Gemini's native PDF understanding is limited to 50 MB for scanned PDFs."
+            ),
+        )
+
     try:
         text, used_model = extract_pdf_with_gemini(client, data)
     except Exception as exc:
@@ -333,13 +352,6 @@ class TranslatedBlocks(BaseModel):
 def extract_layout_blocks(pdf_data: bytes):
     """Extract selectable text blocks with their original page rectangles and basic styling."""
     doc = pymupdf.open(stream=pdf_data, filetype="pdf")
-    if len(doc) > MAX_LAYOUT_PDF_PAGES:
-        doc.close()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Layout-preserving mode supports up to {MAX_LAYOUT_PDF_PAGES} pages for this prototype.",
-        )
-
     pages = []
     total_chars = 0
 
@@ -406,15 +418,6 @@ def extract_layout_blocks(pdf_data: bytes):
                 ),
             )
 
-        if total_chars > MAX_LAYOUT_PDF_CHARS:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"This PDF contains {total_chars:,} text characters. "
-                    f"Keep it under {MAX_LAYOUT_PDF_CHARS:,} characters for the layout-preserving demo."
-                ),
-            )
-
         return doc, pages
     except Exception:
         doc.close()
@@ -443,88 +446,176 @@ INPUT BLOCKS:
 """.strip()
 
 
-def translate_layout_blocks(client: genai.Client, blocks, target_language: str):
-    """Translate blocks in manageable batches and keep their ids stable."""
+def split_layout_batches(blocks):
+    """Split blocks into independent batches without splitting a block."""
     batches = []
     current = []
     current_chars = 0
-    batch_limit = 12000
 
     for block in blocks:
         size = len(block["text"])
-        if current and current_chars + size > batch_limit:
+        if current and current_chars + size > LAYOUT_BATCH_CHARS:
             batches.append(current)
             current = []
             current_chars = 0
+
+        # A single giant block gets its own batch. It is better to preserve the
+        # block than to split it and risk breaking the PDF's structure.
         current.append(block)
         current_chars += size
 
     if current:
         batches.append(current)
 
-    translated_by_id = {}
+    return batches
 
-    for batch in batches:
-        prompt = build_layout_translation_prompt(batch, target_language)
-        errors = []
-        response = None
 
-        for model in MODEL_LIST:
+def validate_translated_batch(batch, response_text):
+    """Validate Gemini's structured result before the brain accepts it."""
+    parsed = TranslatedBlocks.model_validate_json(response_text)
+
+    expected_ids = [block["id"] for block in batch]
+    received_ids = [item.id for item in parsed.blocks]
+
+    if received_ids != expected_ids:
+        raise ValueError(
+            "Gemini changed the PDF block structure "
+            f"(expected {len(expected_ids)} blocks, received {len(received_ids)})."
+        )
+
+    if any(not item.text.strip() for item in parsed.blocks):
+        raise ValueError("Gemini returned an empty translated block.")
+
+    return {item.id: item.text for item in parsed.blocks}
+
+
+async def translate_batch_with_fallback(client, batch, target_language: str):
+    """
+    Worker logic: every batch uses the same model fallback chain.
+
+    Model 1 -> retry -> Model 2 -> retry -> Model 3 -> retry -> Model 4.
+    No model is permanently assigned to a batch.
+    """
+    prompt = build_layout_translation_prompt(batch, target_language)
+    last_errors = []
+
+    for model in MODEL_LIST:
+        thinking_level = (
+            "minimal"
+            if model in {"gemini-3.5-flash-lite", "gemini-3.6-flash"}
+            else "low"
+        )
+        config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(
+                thinking_level=thinking_level
+            ),
+            response_mime_type="application/json",
+            response_schema=TranslatedBlocks,
+        )
+
+        for attempt in range(LAYOUT_MODEL_RETRIES):
             try:
-                thinking_level = (
-                    "minimal"
-                    if model in {"gemini-3.5-flash-lite", "gemini-3.6-flash"}
-                    else "low"
-                )
-                config = types.GenerateContentConfig(
-                    thinking_config=types.ThinkingConfig(
-                        thinking_level=thinking_level
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=config,
                     ),
-                    response_mime_type="application/json",
-                    response_schema=TranslatedBlocks,
+                    timeout=LAYOUT_REQUEST_TIMEOUT,
                 )
-                response = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=config,
-                )
-                break
+
+                response_text = (response.text or "").strip()
+                if not response_text:
+                    raise ValueError("Gemini returned an empty response.")
+
+                return validate_translated_batch(batch, response_text), model
+
             except Exception as exc:
-                errors.append(f"{model}: {exc}")
-                if not is_retryable_model_error(exc):
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"PDF layout translation failed with {model}: {exc}",
-                    ) from exc
+                last_errors.append(f"{model} attempt {attempt + 1}: {exc}")
 
-        if response is None:
-            raise HTTPException(
-                status_code=502,
-                detail="PDF layout translation failed. Tried: " + " | ".join(errors),
+                if not is_retryable_model_error(exc) and not isinstance(exc, ValueError):
+                    # A non-transient request/config error should not waste all
+                    # fallback models, but the brain can still requeue the batch.
+                    break
+
+                if attempt < LAYOUT_MODEL_RETRIES - 1:
+                    delay = min(30, 1.5 * (2 ** attempt) + random.uniform(0, 0.75))
+                    await asyncio.sleep(delay)
+
+        # Move to the next model after this model has exhausted its retries.
+
+    raise RuntimeError(
+        "All configured Gemini fallback models failed for this batch. "
+        + " | ".join(last_errors[-8:])
+    )
+
+
+async def translate_layout_blocks(client: genai.Client, blocks, target_language: str):
+    """
+    Translation Brain / Orchestrator.
+
+    - Runs several independent batches concurrently.
+    - Every batch uses the same model fallback chain.
+    - Failed batches are requeued instead of killing the whole document.
+    - A hard requeue limit prevents infinite loops.
+    """
+    batches = split_layout_batches(blocks)
+    total_batches = len(batches)
+    pending = list(enumerate(batches))
+    completed = {}
+    requeues = {index: 0 for index in range(total_batches)}
+    semaphore = asyncio.Semaphore(LAYOUT_WORKERS)
+
+    async def run_one(batch_index, batch):
+        async with semaphore:
+            return await translate_batch_with_fallback(
+                client,
+                batch,
+                target_language,
             )
 
-        try:
-            parsed = TranslatedBlocks.model_validate_json(response.text)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=502,
-                detail="Gemini returned an invalid layout translation response.",
-            ) from exc
+    while pending:
+        tasks = [
+            asyncio.create_task(run_one(batch_index, batch))
+            for batch_index, batch in pending
+        ]
+        current = pending
+        pending = []
 
-        expected_ids = {block["id"] for block in batch}
-        received_ids = {item.id for item in parsed.blocks}
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        if received_ids != expected_ids:
-            raise HTTPException(
-                status_code=502,
-                detail="Gemini changed the PDF text block structure. Please try the PDF again.",
-            )
+        for (batch_index, batch), result in zip(current, results):
+            if isinstance(result, Exception):
+                requeues[batch_index] += 1
 
-        for item in parsed.blocks:
-            translated_by_id[item.id] = item.text
+                if requeues[batch_index] <= LAYOUT_REQUEUE_LIMIT:
+                    pending.append((batch_index, batch))
+                    continue
+
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Translation brain could not complete batch "
+                        f"{batch_index + 1}/{total_batches} after "
+                        f"{LAYOUT_REQUEUE_LIMIT} requeues. "
+                        f"The remaining PDF was not modified."
+                    ),
+                )
+
+            translated, used_model = result
+            completed[batch_index] = translated
+
+        # Give failed batches a small backoff before the next brain cycle.
+        if pending:
+            await asyncio.sleep(1.0)
+
+    # Reassemble strictly by original batch order. IDs are still validated
+    # inside every batch, so page/block order cannot drift.
+    translated_by_id = {}
+    for batch_index in range(total_batches):
+        translated_by_id.update(completed[batch_index])
 
     return translated_by_id
-
 
 def block_html(text: str) -> str:
     safe = html_escape(text, quote=False)
@@ -607,7 +698,7 @@ async def translate_pdf(
     all_blocks = [block for page_blocks in pages for block in page_blocks]
 
     try:
-        translated_by_id = translate_layout_blocks(
+        translated_by_id = await translate_layout_blocks(
             client,
             all_blocks,
             target_language,
@@ -639,6 +730,8 @@ async def translate_pdf(
             "Content-Disposition": f'attachment; filename="{download_name}"',
             "X-PDF-Pages": str(len(pages)),
             "X-PDF-Blocks": str(len(all_blocks)),
+            "X-Translation-Batches": str(len(split_layout_batches(all_blocks))),
+            "X-Translation-Workers": str(LAYOUT_WORKERS),
         },
     )
 
