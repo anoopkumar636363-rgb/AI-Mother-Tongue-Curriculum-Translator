@@ -320,6 +320,7 @@ sourceText.addEventListener("input", () => {
   currentSourceType = "text";
   savedResultId = null;
   if (saveBtn) saveBtn.disabled = true;
+  updateGlossaryAutoGenerateState();
 });
 
 translateBtn.addEventListener("click", async () => {
@@ -967,6 +968,10 @@ const glossarySaveBtn = document.getElementById("glossarySaveBtn");
 const glossaryCancelBtn = document.getElementById("glossaryCancelBtn");
 const glossarySuggestBtn = document.getElementById("glossarySuggestBtn");
 const quickAddGlossaryBtn = document.getElementById("quickAddGlossaryBtn");
+const glossaryAutoGenerateBtn = document.getElementById("glossaryAutoGenerateBtn");
+const glossarySuggestStatus = document.getElementById("glossarySuggestStatus");
+const glossarySuggestions = document.getElementById("glossarySuggestions");
+const glossarySaveSelectedBtn = document.getElementById("glossarySaveSelectedBtn");
 
 let glossaryLoadedItems = [];
 
@@ -1170,34 +1175,189 @@ glossaryForm.addEventListener("submit", async event => {
   }
 });
 
-async function suggestGlossaryTranslation() {
-  const term = glossarySource.value.trim();
-  if (!term) {
-    setGlossaryError("Enter or select a source term first.");
+function setGlossarySuggestStatus(message, error = false) {
+  glossarySuggestStatus.textContent = message;
+  glossarySuggestStatus.classList.remove("hidden");
+  glossarySuggestStatus.classList.toggle("warning", error);
+}
+
+function updateGlossaryAutoGenerateState() {
+  if (!glossaryAutoGenerateBtn) return;
+  glossaryAutoGenerateBtn.disabled = !sourceText.value.trim() || !language.value;
+}
+
+function renderGlossarySuggestions(items) {
+  glossarySuggestions.replaceChildren();
+
+  if (!items.length) {
+    glossarySuggestions.classList.add("hidden");
+    glossarySaveSelectedBtn.classList.add("hidden");
+    setGlossarySuggestStatus("No new glossary terms were suggested for this language and subject.");
     return;
   }
-  setGlossaryError("");
-  glossaryTranslated.value = "";
-  glossaryTranslated.placeholder = "Translating…";
-  glossarySuggestBtn.disabled = true;
-  try {
-    const form = new FormData();
-    form.append("source_term", term);
-    form.append("target_language", glossaryTargetLanguage.value);
-    form.append("subject", glossarySubjectInput.value.trim());
-    const data = await glossaryRequest("/api/glossary/suggest", { method: "POST", body: form });
-    glossaryTranslated.value = data.translated_term;
-  } catch (err) {
-    setGlossaryError(err.message);
-  } finally {
-    glossaryTranslated.placeholder = "Exact translated term";
-    glossarySuggestBtn.disabled = false;
-  }
-}
-glossarySuggestBtn.addEventListener("click", suggestGlossaryTranslation);
 
+  items.forEach(item => {
+    const row = document.createElement("div");
+    row.className = "glossary-suggestion-row";
+    Object.assign(row.style, {
+      display: "grid",
+      gridTemplateColumns: "24px minmax(0, 1fr) 24px minmax(0, 1fr)",
+      gap: "8px",
+      alignItems: "center",
+      padding: "10px",
+      marginTop: "8px",
+      border: "1px solid rgba(255,255,255,.07)",
+      borderRadius: "12px",
+      background: "rgba(255,255,255,.025)"
+    });
+
+    const checkWrap = document.createElement("label");
+    checkWrap.style.display = "grid";
+    checkWrap.style.placeItems = "center";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.style.width = "16px";
+    checkbox.style.height = "16px";
+    checkbox.style.accentColor = "#7564ff";
+
+    checkWrap.appendChild(checkbox);
+
+    const source = document.createElement("input");
+    source.type = "text";
+    source.className = "glossary-edit-input";
+    source.value = item.source_term || "";
+    source.maxLength = 200;
+    source.placeholder = "Source term";
+
+    const arrow = document.createElement("span");
+    arrow.textContent = "→";
+    arrow.style.textAlign = "center";
+    arrow.style.color = "#7564ff";
+    arrow.style.fontWeight = "800";
+
+    const translated = document.createElement("input");
+    translated.type = "text";
+    translated.className = "glossary-edit-input";
+    translated.value = item.translated_term || "";
+    translated.maxLength = 200;
+    translated.placeholder = "Translated term";
+
+    row.append(checkWrap, source, arrow, translated);
+    glossarySuggestions.appendChild(row);
+  });
+
+  glossarySuggestions.classList.remove("hidden");
+  glossarySaveSelectedBtn.classList.remove("hidden");
+  setGlossarySuggestStatus(
+    items.length + " suggestion" + (items.length === 1 ? "" : "s") +
+    " found. Review the terms before saving."
+  );
+}
+
+glossaryAutoGenerateBtn.addEventListener("click", async () => {
+  const text = sourceText.value.trim();
+
+  if (!text) {
+    setGlossarySuggestStatus("Add curriculum text first.", true);
+    return;
+  }
+
+  if (text.length > 30000) {
+    setGlossarySuggestStatus("Keep the curriculum under 30,000 characters.", true);
+    return;
+  }
+
+  glossaryAutoGenerateBtn.disabled = true;
+  glossarySaveSelectedBtn.classList.add("hidden");
+  glossarySuggestions.classList.add("hidden");
+  setGlossarySuggestStatus("Gemini is finding technical and subject-specific terms...");
+
+  try {
+    const data = await glossaryRequest("/api/glossary/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        target_language: language.value,
+        subject: subject.value.trim(),
+      }),
+    });
+
+    renderGlossarySuggestions(data.suggestions || []);
+  } catch (err) {
+    setGlossarySuggestStatus(err.message, true);
+    glossarySuggestions.classList.add("hidden");
+    glossarySaveSelectedBtn.classList.add("hidden");
+  } finally {
+    updateGlossaryAutoGenerateState();
+  }
+});
+
+glossarySaveSelectedBtn.addEventListener("click", async () => {
+  const rows = [...glossarySuggestions.querySelectorAll(".glossary-suggestion-row")];
+  const selected = rows.map(row => ({
+    row,
+    checked: row.querySelector('input[type="checkbox"]')?.checked,
+    sourceTerm: row.querySelectorAll('input[type="text"]')[0]?.value.trim(),
+    translatedTerm: row.querySelectorAll('input[type="text"]')[1]?.value.trim(),
+  })).filter(item => item.checked && item.sourceTerm && item.translatedTerm);
+
+  if (!selected.length) {
+    setGlossarySuggestStatus("Select at least one complete glossary term.", true);
+    return;
+  }
+
+  glossarySaveSelectedBtn.disabled = true;
+  setGlossarySuggestStatus("Saving selected glossary terms...");
+
+  let saved = 0;
+  let duplicates = 0;
+  let failed = 0;
+
+  for (const item of selected) {
+    try {
+      await glossaryRequest("/api/glossary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_term: item.sourceTerm,
+          target_language: glossaryTargetLanguage.value,
+          translated_term: item.translatedTerm,
+          subject: glossarySubjectInput.value.trim(),
+        }),
+      });
+      saved += 1;
+      const checkbox = item.row.querySelector('input[type="checkbox"]');
+      if (checkbox) checkbox.checked = false;
+    } catch (err) {
+      if (/already exists/i.test(err.message) || /409/.test(err.message)) {
+        duplicates += 1;
+        const checkbox = item.row.querySelector('input[type="checkbox"]');
+        if (checkbox) checkbox.checked = false;
+      } else {
+        failed += 1;
+      }
+    }
+  }
+
+  glossarySaveSelectedBtn.disabled = false;
+  await loadGlossary();
+
+  const parts = [];
+  if (saved) parts.push(saved + " saved");
+  if (duplicates) parts.push(duplicates + " duplicate" + (duplicates === 1 ? "" : "s") + " skipped");
+  if (failed) parts.push(failed + " failed");
+
+  setGlossarySuggestStatus(
+    parts.length ? parts.join(" • ") : "Nothing was saved.",
+    failed > 0
+  );
+});
 language.addEventListener("change", () => {
   if (!glossaryEditId.value) glossaryTargetLanguage.value = language.value;
+  updateGlossaryAutoGenerateState();
 });
 glossaryCancelBtn.addEventListener("click", resetGlossaryForm);
 glossarySearchBtn.addEventListener("click", filterGlossaryRows);
@@ -1217,7 +1377,6 @@ quickAddGlossaryBtn.addEventListener("click", async () => {
   glossaryTargetLanguage.value = language.value;
   glossarySubjectInput.value = subject.value.trim();
   showTab("glossaryView");
-  await suggestGlossaryTranslation();
   glossarySource.focus();
 });
 
@@ -1289,4 +1448,5 @@ logoutBtn.addEventListener("click", () => {
 });
 
 syncGlossaryLanguages();
+updateGlossaryAutoGenerateState();
 showTab("translateView");
