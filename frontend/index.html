@@ -238,6 +238,21 @@
         <button id="glossaryNext" class="ghost-btn">Next →</button>
       </div>
 
+      <div class="glossary-form-card glossary-auto-card">
+        <div class="glossary-form-head">
+          <div>
+            <h3>AI glossary suggestions</h3>
+            <p>Let Gemini find important technical terms from the current curriculum for review.</p>
+          </div>
+          <button id="glossaryAutoGenerateBtn" type="button" class="ghost-btn" disabled>✨ Auto-generate glossary from this text</button>
+        </div>
+        <div id="glossarySuggestStatus" class="glossary-status hidden" aria-live="polite"></div>
+        <div id="glossarySuggestions" class="hidden"></div>
+        <div class="glossary-form-actions">
+          <button id="glossarySaveSelectedBtn" type="button" class="translate-btn hidden">Save selected terms →</button>
+        </div>
+      </div>
+
       <div class="glossary-form-card">
         <div class="glossary-form-head">
           <div>
@@ -260,7 +275,6 @@
           <div class="field">
             <label for="glossaryTranslated">Translated term</label>
             <input id="glossaryTranslated" type="text" maxlength="200" placeholder="Exact translated term" />
-            <button id="glossarySuggestBtn" type="button" class="ghost-btn glossary-suggest-btn">✨ Auto-translate</button>
           </div>
           <div class="field">
             <label for="glossarySubject">Subject <span>(optional)</span></label>
@@ -372,6 +386,6 @@
     </footer>
   </main>
 
-  <script src="/static/app.js?v=20260922-pdf3"></script>
+  <script src="/static/app.js?v=20260922-glossary-auto1"></script>
 </body>
 </html>
