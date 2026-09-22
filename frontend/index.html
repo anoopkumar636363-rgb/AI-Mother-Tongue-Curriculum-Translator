@@ -53,7 +53,6 @@
               <span>📷 Scan / Image</span>
             </label>
             <button id="translatePdfBtn" class="ghost-btn pdf-translate-btn" disabled>Translate PDF ↔ Keep Layout</button>
-            <button id="addGlossaryQuickBtn" class="ghost-btn">Add to glossary</button>
             <button id="clearBtn" class="ghost-btn">Clear</button>
           </div>
 
@@ -75,6 +74,7 @@
             <div class="output-actions">
               <button id="saveBtn" class="ghost-btn" disabled>Save to Library</button>
               <button id="downloadBtn" class="ghost-btn" disabled>Download</button>
+        <button id="downloadPdfBtn" class="ghost-btn" disabled>Download PDF</button>
               <button id="copyBtn" class="ghost-btn" disabled>Copy</button>
             </div>
           </div>
@@ -91,16 +91,16 @@
         <div class="field">
           <label for="language">Mother tongue</label>
           <select id="language">
-            <option>Kannada</option>
-            <option>Hindi</option>
-            <option>Telugu</option>
-            <option>Tamil</option>
-            <option>Marathi</option>
-            <option>Malayalam</option>
-            <option>Bengali</option>
-            <option>Gujarati</option>
-            <option>Punjabi</option>
-            <option>English</option>
+            <option value="Kannada">ಕನ್ನಡ (Kannada)</option>
+            <option value="Hindi">हिन्दी (Hindi)</option>
+            <option value="Telugu">తెలుగు (Telugu)</option>
+            <option value="Tamil">தமிழ் (Tamil)</option>
+            <option value="Marathi">मराठी (Marathi)</option>
+            <option value="Malayalam">മലയാളം (Malayalam)</option>
+            <option value="Bengali">বাংলা (Bengali)</option>
+            <option value="Gujarati">ગુજરાતી (Gujarati)</option>
+            <option value="Punjabi">ਪੰਜਾਬੀ (Punjabi)</option>
+            <option value="English">English</option>
           </select>
         </div>
 
@@ -116,10 +116,6 @@
           <label for="grade">Grade <span>(optional)</span></label>
           <input id="grade" type="text" placeholder="e.g. Grade 10" maxlength="50" />
         </div>
-        <label class="checkbox-field">
-          <input id="useGlossary" type="checkbox" checked />
-          <span>Use glossary</span>
-        </label>
         <div class="field small-field save-title-field">
           <label for="saveTitle">Library title <span>(used when saving)</span></label>
           <input id="saveTitle" type="text" maxlength="200" placeholder="Auto-filled after translation" />
@@ -142,7 +138,6 @@
       </div>
 
       <div id="notice" class="notice hidden"></div>
-      <div id="glossaryStatus" class="glossary-status hidden" aria-live="polite"></div>
     </section>
 
         <section id="libraryView" class="view library-view card hidden">
@@ -182,6 +177,7 @@
             <button id="librarySaveBtn" class="translate-btn">Save changes →</button>
             <button id="libraryCopyBtn" class="ghost-btn">Copy</button>
             <button id="libraryDownloadBtn" class="ghost-btn">Download .txt</button>
+        <button id="libraryDownloadPdfBtn" class="ghost-btn">Download PDF</button>
             <button id="libraryDeleteBtn" class="ghost-btn danger-btn">Delete</button>
             <button id="libraryLoadBtn" class="ghost-btn">Load into Translate tab</button>
           </div>
@@ -206,112 +202,12 @@
 <section id="glossaryView" class="view glossary-view card hidden">
       <div class="glossary-head">
         <div>
-          <div class="badge">✦ TRANSLATION GLOSSARY</div>
-          <h2>Technical Term Glossary</h2>
-          <p>Keep important technical terms consistent across curriculum translations.</p>
-        </div>
-      </div>
-
-      <div id="glossaryError" class="library-error hidden"></div>
-      <div id="glossaryImportSummary" class="glossary-import-summary hidden"></div>
-
-      <div class="glossary-toolbar">
-        <select id="glossaryLanguageFilter" aria-label="Glossary language">
-          <option value="">All languages</option>
-          <option>Kannada</option><option>Hindi</option><option>Telugu</option>
-          <option>Tamil</option><option>Marathi</option><option>Malayalam</option>
-          <option>Bengali</option><option>Gujarati</option><option>Punjabi</option><option>English</option>
-        </select>
-        <select id="glossarySubjectFilter" aria-label="Glossary subject">
-          <option value="">All subjects</option>
-        </select>
-        <input id="glossarySearch" type="search" maxlength="200" placeholder="Search source or translated term..." />
-        <button id="glossarySearchBtn" class="ghost-btn" type="button">Search</button>
-        <button id="glossaryImportBtn" class="ghost-btn" type="button">Import CSV</button>
-        <input id="glossaryImportInput" type="file" accept=".csv,text/csv" class="hidden" />
-        <button id="glossaryExportBtn" class="ghost-btn" type="button">Export CSV</button>
-        <a id="glossaryTemplateBtn" class="ghost-btn glossary-link" href="#">Download CSV template</a>
-      </div>
-
-      <div class="glossary-layout">
-        <div class="glossary-table-card">
-          <div id="glossaryEmpty" class="empty-dashboard hidden">No glossary terms yet</div>
-          <div class="table-wrap">
-            <table class="glossary-table">
-              <thead>
-                <tr><th>Source term</th><th>Language</th><th>Translated term</th><th>Subject</th><th>Notes</th><th>Actions</th></tr>
-              </thead>
-              <tbody id="glossaryBody"></tbody>
-            </table>
-          </div>
-          <div class="pager">
-            <button id="glossaryPrev" class="ghost-btn" type="button">← Previous</button>
-            <span id="glossaryPageLabel">Page 1</span>
-            <button id="glossaryNext" class="ghost-btn" type="button">Next →</button>
-          </div>
-        </div>
-
-        <div class="glossary-form-card">
-          <div class="panel-head">
-            <div>
-              <h3 id="glossaryFormTitle">Add term</h3>
-              <p>One term per entry. Subject can be left empty for a global term.</p>
-            </div>
-          </div>
-          <form id="glossaryForm" class="glossary-form">
-            <input id="glossaryEditId" type="hidden" />
-            <div class="field">
-              <label for="glossarySource">Source term</label>
-              <input id="glossarySource" type="text" maxlength="200" required placeholder="e.g. photosynthesis" />
-            </div>
-            <div class="field">
-              <label for="glossaryTargetLanguage">Target language</label>
-              <select id="glossaryTargetLanguage" required>
-                <option>Kannada</option><option>Hindi</option><option>Telugu</option>
-                <option>Tamil</option><option>Marathi</option><option>Malayalam</option>
-                <option>Bengali</option><option>Gujarati</option><option>Punjabi</option><option>English</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="glossaryTranslated">Translated term</label>
-              <input id="glossaryTranslated" type="text" maxlength="200" required placeholder="Exact preferred translation" />
-            </div>
-            <div class="field">
-              <label for="glossarySubject">Subject <span>(optional)</span></label>
-              <input id="glossarySubject" type="text" maxlength="100" placeholder="e.g. Biology" />
-            </div>
-            <div class="field">
-              <label for="glossaryNotes">Notes <span>(optional)</span></label>
-              <textarea id="glossaryNotes" maxlength="500" rows="4" placeholder="Usage notes for teachers"></textarea>
-            </div>
-            <div class="glossary-form-actions">
-              <button id="glossarySaveBtn" class="translate-btn" type="submit">Save term →</button>
-              <button id="glossaryCancelBtn" class="ghost-btn hidden" type="button">Cancel edit</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </section>
-
-    
-
-    <section id="glossaryView" class="view glossary-view card hidden">
-      <div class="glossary-head">
-        <div>
           <div class="badge">✦ TECHNICAL TERMINOLOGY</div>
           <h2>Translation Glossary</h2>
           <p>Keep important curriculum terms consistent across translations.</p>
-        </div>
-        <div class="glossary-actions">
-          <button id="glossaryImportBtn" class="ghost-btn">Import CSV</button>
-          <input id="glossaryImportInput" type="file" accept=".csv,text/csv" class="hidden" />
-          <button id="glossaryExportBtn" class="ghost-btn">Export CSV</button>
-          <a id="glossaryTemplateLink" class="ghost-btn glossary-link" href="#">Download CSV template</a>
-        </div>
-      </div>
+        </div></div>
 
       <div id="glossaryError" class="library-error hidden"></div>
-      <div id="glossaryImportSummary" class="glossary-import-summary hidden"></div>
 
       <div class="glossary-toolbar">
         <select id="glossaryLanguageFilter"><option value="">All languages</option></select>
@@ -328,7 +224,6 @@
               <th>Language</th>
               <th>Translated term</th>
               <th>Subject</th>
-              <th>Notes</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -343,6 +238,21 @@
         <button id="glossaryNext" class="ghost-btn">Next →</button>
       </div>
 
+      <div class="glossary-form-card glossary-auto-card">
+        <div class="glossary-form-head">
+          <div>
+            <h3>AI glossary suggestions</h3>
+            <p>Let Gemini find important technical terms from the current curriculum for review.</p>
+          </div>
+          <button id="glossaryAutoGenerateBtn" type="button" class="ghost-btn" disabled>✨ Auto-generate glossary from this text</button>
+        </div>
+        <div id="glossarySuggestStatus" class="glossary-status hidden" aria-live="polite"></div>
+        <div id="glossarySuggestions" class="hidden"></div>
+        <div class="glossary-form-actions">
+          <button id="glossarySaveSelectedBtn" type="button" class="translate-btn hidden">Save selected terms →</button>
+        </div>
+      </div>
+
       <div class="glossary-form-card">
         <div class="glossary-form-head">
           <div>
@@ -351,7 +261,9 @@
           </div>
           <button id="glossaryCancelBtn" class="ghost-btn hidden">Cancel edit</button>
         </div>
-        <div class="glossary-form-grid">
+        <form id="glossaryForm" class="glossary-form">
+          <input id="glossaryEditId" type="hidden" value="" />
+          <div class="glossary-form-grid">
           <div class="field">
             <label for="glossarySource">Source term</label>
             <input id="glossarySource" type="text" maxlength="200" placeholder="e.g. transistor" />
@@ -368,14 +280,11 @@
             <label for="glossarySubject">Subject <span>(optional)</span></label>
             <input id="glossarySubject" type="text" maxlength="100" placeholder="e.g. Electrical Engineering" />
           </div>
-          <div class="field glossary-notes-field">
-            <label for="glossaryNotes">Notes <span>(optional)</span></label>
-            <textarea id="glossaryNotes" maxlength="500" rows="3" placeholder="Usage or teacher notes"></textarea>
           </div>
-        </div>
-        <div class="glossary-form-actions">
-          <button id="glossarySaveBtn" class="translate-btn">Add term →</button>
-        </div>
+          <div class="glossary-form-actions">
+            <button id="glossarySaveBtn" class="translate-btn" type="submit">Add term →</button>
+          </div>
+        </form>
       </div>
     </section>
 
@@ -418,7 +327,6 @@
           <div class="stat-card"><span>Average time</span><strong id="statAvg">0 ms</strong></div>
           <div class="stat-card" id="statSavedCard"><span>Saved materials</span><strong id="statSaved">0</strong></div>
           <div class="stat-card"><span>Glossary terms</span><strong id="statGlossary">0</strong></div>
-          <div class="stat-card"><span>Glossary terms</span><strong id="statGlossary">0</strong></div>
         </div>
 
         <div class="chart-grid">
@@ -436,10 +344,6 @@
           <div id="sourceBreakdown" class="source-breakdown"></div>
         </div>
 
-        <div class="chart-card source-card">
-          <h3>Glossary terms by language</h3>
-          <div id="glossaryLanguageBreakdown" class="source-breakdown"></div>
-        </div>
 
         <div class="events-card">
           <div class="events-head">
@@ -482,6 +386,6 @@
     </footer>
   </main>
 
-  <script src="/static/app.js?v=20260921-dashboard"></script>
+  <script src="/static/app.js?v=20260922-glossary-auto1"></script>
 </body>
 </html>

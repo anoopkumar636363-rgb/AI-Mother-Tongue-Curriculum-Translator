@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 from backend.db import init_db, record_event, set_event_context, get_event_context
@@ -98,7 +98,9 @@ app = FastAPI(
     version="1.3.0",
 )
 
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 app.include_router(admin_router)
 from backend.routes_library import router as library_router
 from backend.routes_glossary import router as glossary_router
@@ -215,7 +217,7 @@ def build_translation_prompt(text: str, target_language: str, glossary_terms=Non
     glossary_block = ""
     if glossary_terms:
         glossary_lines = [
-            "GLOSSARY (mandatory): translate these terms EXACTLY as given and do not paraphrase:"
+            "GLOSSARY (mandatory): whenever the source term appears, write ONLY the translated term shown below. Never write the source term next to it or in brackets:"
         ]
         glossary_lines.extend(
             f"- {item['source_term']} -> {item['translated_term']}"
@@ -233,10 +235,10 @@ Rules:
 1. Preserve the original meaning and educational intent.
 2. Preserve headings, numbered lists, bullet points, examples, formulas, units, symbols, and paragraph structure.
 3. Use natural language appropriate for a student, not awkward word-for-word translation.
-4. Keep internationally standard scientific, mathematical, programming, and technical terms when translating them would reduce clarity.
+4. Translate ALL words into {target_language}, including technical and scientific terms, written in {target_language} script. Keep ONLY formulas, equations, numbers, units, symbols, code, URLs, variable names and proper names unchanged.
 5. Do not add facts that are not present in the source.
 6. Do not summarize or shorten the content.
-7. Return ONLY the translated curriculum. Do not add commentary.{glossary_section}
+7. Write the output ONLY in {target_language}. Do NOT include the original text, do NOT repeat the source word in brackets after a translated word, and do NOT give bilingual output. No commentary.{glossary_section}
 
 CURRICULUM:
 {text}
@@ -245,14 +247,25 @@ CURRICULUM:
 
 @app.get("/")
 async def home():
-    return FileResponse("frontend/index.html")
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
 @app.get("/api/health")
 async def health():
+    has_gemini_key = bool(
+        TRANSLATION_API_KEY
+        or PDF_API_KEY
+        or os.getenv("GEMINI_API_KEY", "").strip()
+    )
     return {
         "status": "ok",
         "models": MODEL_LIST,
+        "gemini_configured": has_gemini_key,
+        "message": (
+            ""
+            if has_gemini_key
+            else "Gemini API key is not configured. Add GEMINI_API_KEY to .env."
+        ),
     }
 
 
@@ -591,7 +604,7 @@ def build_layout_translation_prompt(blocks, target_language: str, glossary_terms
     glossary_block = ""
     if glossary_terms:
         glossary_lines = [
-            "GLOSSARY (mandatory): translate these terms EXACTLY as given and do not paraphrase:"
+            "GLOSSARY (mandatory): whenever the source term appears, write ONLY the translated term shown below. Never write the source term next to it or in brackets:"
         ]
         glossary_lines.extend(
             f"- {item['source_term']} -> {item['translated_term']}"
@@ -607,11 +620,10 @@ Translate every block while preserving the PDF's structure.
 Rules:
 1. Return exactly one object for every input block, using the same id.
 2. Translate only the human-language text.
-3. Preserve formulas, equations, numbers, units, symbols, code, URLs, variable names,
-   chemical notation, and standard technical terms when translating them would reduce clarity.
+3. Translate ALL words into {target_language}, including technical and scientific terms, written in {target_language} script. Keep ONLY formulas, equations, numbers, units, symbols, code, URLs, variable names and proper names unchanged.
 4. Preserve line breaks when they are meaningful to the source.
 5. Do not summarize, merge, split, reorder, or omit blocks.
-6. Do not add explanations or commentary.
+6. Write the output ONLY in {target_language}. Do NOT include the original text, do NOT repeat the source word in brackets after a translated word, and do NOT give bilingual output. No commentary.
 7. Use natural language appropriate for a student.{glossary_section}
 
 INPUT BLOCKS:
@@ -951,6 +963,80 @@ def save_pdf_bytes(doc) -> bytes:
     doc.save(output, garbage=4, deflate=True)
     return output.getvalue()
 
+
+class PdfExportRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=200000)
+    target_language: str
+    title: str = Field(default="Translated curriculum", max_length=200)
+    subject: str = Field(default="", max_length=100)
+    grade: str = Field(default="", max_length=50)
+    reviewed: bool = False
+
+
+def build_text_pdf(payload: PdfExportRequest) -> bytes:
+    archive, font_css = get_font_resources(payload.target_language)
+    meta = [payload.target_language]
+    if payload.subject.strip():
+        meta.append(payload.subject.strip())
+    if payload.grade.strip():
+        meta.append(payload.grade.strip())
+    if payload.reviewed:
+        meta.append("Reviewed by teacher")
+    paragraphs = re.split(r"\n\s*\n", payload.text.strip())
+    body = "".join(
+        "<p>" + block_html(p.strip()) + "</p>" for p in paragraphs if p.strip()
+    )
+    html = (
+        "<h1>" + html_escape(payload.title.strip() or "Translated curriculum") + "</h1>"
+        "<div class='meta'>" + html_escape(" • ".join(meta)) + "</div>"
+        + body
+    )
+    base_css = (
+        "body { font-size: 12pt; line-height: 1.55; }\n"
+        "h1 { font-size: 18pt; margin: 0 0 4pt 0; }\n"
+        ".meta { font-size: 9pt; color: #666666; margin-bottom: 14pt; }\n"
+        "p { margin: 0 0 8pt 0; }\n"
+    )
+    family = FONT_FILES[payload.target_language][1]
+    fallback_css = ""
+    if payload.target_language != "English":
+        fallback_css = (
+            '@font-face { font-family: "NotoSans"; src: url("NotoSans.ttf"); }\n'
+            '* { font-family: "%s", "NotoSans"; }\n' % family
+        )
+    css = font_css + "\n" + fallback_css + base_css
+    story = pymupdf.Story(html=html, user_css=css, archive=archive)
+    buffer = BytesIO()
+    writer = pymupdf.DocumentWriter(buffer)
+    mediabox = pymupdf.paper_rect("a4")
+    where = mediabox + (50, 50, -50, -50)
+    more = True
+    while more:
+        device = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(device)
+        writer.end_page()
+    writer.close()
+    return buffer.getvalue()
+
+
+@app.post("/api/export-pdf")
+async def export_pdf(payload: PdfExportRequest):
+    validate_target_language(payload.target_language)
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="There is no translated text to export.")
+    try:
+        pdf_bytes = await asyncio.to_thread(build_text_pdf, payload)
+    except Exception as exc:
+        logger.exception("Could not build PDF export")
+        raise HTTPException(status_code=500, detail=f"Could not create the PDF: {exc}") from exc
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", payload.title).strip("-") or "translation"
+    lang = re.sub(r"[^A-Za-z0-9]+", "-", payload.target_language.lower()).strip("-")
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{base}-{lang}.pdf"'},
+    )
 
 @app.post("/api/translate-pdf")
 @log_event("pdf-layout")

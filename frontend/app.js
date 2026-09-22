@@ -3,7 +3,71 @@ const language = document.getElementById("language");
 const translateBtn = document.getElementById("translateBtn");
 const output = document.getElementById("output");
 const copyBtn = document.getElementById("copyBtn");
+
+
+async function downloadPdf({ text, targetLanguage, title, subject, grade, reviewed }) {
+  const res = await fetch("/api/export-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, target_language: targetLanguage, title, subject, grade, reviewed: !!reviewed }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const d = data.detail;
+    throw new Error(Array.isArray(d) ? d.map(x => x.msg).join(", ") : (d || "Could not create the PDF."));
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/i);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = match ? match[1] : "translation.pdf";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+
+libraryDownloadPdfBtn.addEventListener("click", async () => {
+  if (!libraryItem) return;
+
+  try {
+    await downloadPdf({
+      text: libraryTranslatedText.value,
+      targetLanguage: libraryItem.target_language,
+      title: libraryDetailTitle.value.trim() || "Translated curriculum",
+      subject: libraryItem.subject || "",
+      grade: libraryItem.grade || "",
+      reviewed: false,
+    });
+    showNotice("PDF downloaded.");
+  } catch (err) {
+    setLibraryError(err.message);
+  }
+});
+
+downloadPdfBtn.addEventListener("click", async () => {
+  const text = output.textContent.trim();
+  if (!text || output.classList.contains("empty")) return;
+
+  try {
+    await downloadPdf({
+      text,
+      targetLanguage: language.value,
+      title: saveTitle.value.trim() || "Translated curriculum",
+      subject: subject.value.trim(),
+      grade: grade.value.trim(),
+      reviewed: false,
+    });
+    showNotice("PDF downloaded.");
+  } catch (err) {
+    showNotice(err.message, true);
+  }
+});
 const downloadBtn = document.getElementById("downloadBtn");
+const downloadPdfBtn = document.getElementById("downloadPdfBtn");
 const saveBtn = document.getElementById("saveBtn");
 const saveTitle = document.getElementById("saveTitle");
 const charCount = document.getElementById("charCount");
@@ -21,6 +85,7 @@ const loadingLabel = document.getElementById("loadingLabel");
 const health = document.getElementById("health");
 const subject = document.getElementById("subject");
 const grade = document.getElementById("grade");
+const useGlossary = document.getElementById("useGlossary");
 
 function updateCount() {
   charCount.textContent = sourceText.value.length.toLocaleString();
@@ -86,6 +151,7 @@ clearBtn.addEventListener("click", () => {
   output.innerHTML = '<div class="empty-icon">文</div><h3>Your translation appears here</h3><p>Choose a language and press Translate.</p>';
   copyBtn.disabled = true;
   downloadBtn.disabled = true;
+  downloadPdfBtn.disabled = true;
   fileStatus.classList.add("hidden");
   notice.classList.add("hidden");
   setLoading(false);
@@ -170,6 +236,7 @@ translatePdfBtn.addEventListener("click", async () => {
   form.append("target_language", language.value);
   form.append("subject", subject.value.trim());
   form.append("grade", grade.value.trim());
+  form.append("use_glossary", useGlossary.checked ? "true" : "false");
 
   try {
     const res = await fetch("/api/translate-pdf", {
@@ -197,6 +264,7 @@ translatePdfBtn.addEventListener("click", async () => {
     link.remove();
     URL.revokeObjectURL(url);
 
+    const glossaryUsed = res.headers.get("X-Glossary-Terms-Used");
     const pages = res.headers.get("X-PDF-Pages");
     const batches = res.headers.get("X-Translation-Batches");
     const workers = res.headers.get("X-Translation-Workers");
@@ -207,7 +275,8 @@ translatePdfBtn.addEventListener("click", async () => {
       " • layout preserved" +
       (pages ? " • " + pages + " pages" : "") +
       (batches ? " • " + batches + " AI batches" : "") +
-      (workers ? " • " + workers + " workers" : "")
+      (workers ? " • " + workers + " workers" : "") +
+      (glossaryUsed ? " • " + glossaryUsed + " glossary terms" : "")
     );
   } catch (err) {
     setLoading(false);
@@ -251,6 +320,7 @@ sourceText.addEventListener("input", () => {
   currentSourceType = "text";
   savedResultId = null;
   if (saveBtn) saveBtn.disabled = true;
+  updateGlossaryAutoGenerateState();
 });
 
 translateBtn.addEventListener("click", async () => {
@@ -281,12 +351,14 @@ translateBtn.addEventListener("click", async () => {
   output.textContent = "AI is translating...";
   copyBtn.disabled = true;
   downloadBtn.disabled = true;
+  downloadPdfBtn.disabled = true;
 
   const form = new FormData();
   form.append("text", text);
   form.append("target_language", language.value);
   form.append("subject", subject.value.trim());
   form.append("grade", grade.value.trim());
+  form.append("use_glossary", useGlossary.checked ? "true" : "false");
 
   try {
     const res = await fetch("/api/translate", { method: "POST", body: form });
@@ -305,8 +377,21 @@ translateBtn.addEventListener("click", async () => {
     await animateTyping(data.text, output);
 
     setLoading(false);
+    const glossaryMissing = Array.isArray(data.glossary_missing) ? data.glossary_missing : [];
+    const glossaryTermsUsed = Array.isArray(data.glossary_terms_used) ? data.glossary_terms_used : [];
+    let message = `Translation complete • ${language.value}`;
+    if (glossaryTermsUsed.length) {
+      message += " • glossary used: " + glossaryTermsUsed.join(", ");
+    } else if (useGlossary.checked) {
+      message += " • no glossary terms matched this text";
+    }
+    if (glossaryMissing.length) {
+      message += " • not applied by AI: " + glossaryMissing.join(", ");
+    }
+    showNotice(message, glossaryMissing.length > 0);
     copyBtn.disabled = false;
     downloadBtn.disabled = false;
+  downloadPdfBtn.disabled = false;
     saveBtn.disabled = false;
     savedResultId = null;
     saveTitle.value = text.slice(0, 60).trim() || "Untitled teaching material";
@@ -360,7 +445,12 @@ fetch("/api/health")
   .then(r => r.json())
   .then(data => {
     const models = Array.isArray(data.models) ? data.models.join(" → ") : "Gemini";
-    health.textContent = `● API ready • ${models}`;
+    if (data.gemini_configured === false) {
+      health.textContent = "● Gemini API key not configured";
+      showNotice(data.message || "Add GEMINI_API_KEY to .env before translating.", true);
+    } else {
+      health.textContent = `● API ready • ${models}`;
+    }
   })
   .catch(() => {
     health.textContent = "● Start the FastAPI server";
@@ -374,6 +464,7 @@ const tabs = document.querySelectorAll(".tab-btn");
 const translateView = document.getElementById("translateView");
 const libraryView = document.getElementById("libraryView");
 const dashboardView = document.getElementById("dashboardView");
+const glossaryView = document.getElementById("glossaryView");
 
 const libraryError = document.getElementById("libraryError");
 const libraryListView = document.getElementById("libraryListView");
@@ -396,6 +487,7 @@ const libraryTranslatedText = document.getElementById("libraryTranslatedText");
 const librarySaveBtn = document.getElementById("librarySaveBtn");
 const libraryCopyBtn = document.getElementById("libraryCopyBtn");
 const libraryDownloadBtn = document.getElementById("libraryDownloadBtn");
+const libraryDownloadPdfBtn = document.getElementById("libraryDownloadPdfBtn");
 const libraryDeleteBtn = document.getElementById("libraryDeleteBtn");
 const libraryLoadBtn = document.getElementById("libraryLoadBtn");
 
@@ -447,6 +539,9 @@ function showTab(id) {
   translateView.classList.toggle("hidden", id !== "translateView");
   libraryView.classList.toggle("hidden", id !== "libraryView");
   dashboardView.classList.toggle("hidden", id !== "dashboardView");
+  glossaryView.classList.toggle("hidden", id !== "glossaryView");
+
+  if (id === "glossaryView") loadGlossary();
 
   if (id === "libraryView") {
     loadLibraryFilters();
@@ -500,14 +595,14 @@ function escapeHtml(value) {
   }[char]));
 }
 
-function renderSourceBreakdown(items) {
+function renderPillBreakdown(container, items, emptyMessage = "No data yet") {
   if (!items.length) {
-    sourceBreakdown.textContent = "No translations yet";
-    sourceBreakdown.classList.add("empty-dashboard");
+    container.textContent = emptyMessage;
+    container.classList.add("empty-dashboard");
     return;
   }
-  sourceBreakdown.classList.remove("empty-dashboard");
-  sourceBreakdown.replaceChildren();
+  container.classList.remove("empty-dashboard");
+  container.replaceChildren();
   items.forEach(item => {
     const pill = document.createElement("div");
     pill.className = "source-pill";
@@ -516,8 +611,12 @@ function renderSourceBreakdown(items) {
     const count = document.createElement("strong");
     count.textContent = formatNumber(item.count);
     pill.append(label, count);
-    sourceBreakdown.appendChild(pill);
+    container.appendChild(pill);
   });
+}
+
+function renderSourceBreakdown(items) {
+  renderPillBreakdown(sourceBreakdown, items, "No translations yet");
 }
 
 async function fetchStats() {
@@ -546,6 +645,14 @@ async function loadDashboard() {
 
     renderCharts(stats);
     renderSourceBreakdown(stats.by_source_type || []);
+
+    const glossaryCount = document.getElementById("statGlossary");
+    if (glossaryCount) glossaryCount.textContent = formatNumber(stats.glossary_terms);
+
+    const glossaryLanguageBreakdown = document.getElementById("glossaryLanguageBreakdown");
+    if (glossaryLanguageBreakdown) {
+      renderPillBreakdown(glossaryLanguageBreakdown, stats.glossary_by_language || [], "No glossary terms yet");
+    }
 
     const currentLanguage = eventLanguage.value;
     eventLanguage.innerHTML = '<option value="">All languages</option>' +
@@ -795,8 +902,11 @@ libraryLoadBtn.addEventListener("click", () => {
   output.textContent = libraryItem.translated_text;
   copyBtn.disabled = false;
   downloadBtn.disabled = false;
+  downloadPdfBtn.disabled = false;
   saveBtn.disabled = false;
-  showTab("translateView");
+  syncGlossaryLanguages();
+resetGlossaryForm();
+showTab("translateView");
   showNotice('Loaded "' + libraryItem.title + '" into Translate.');
   updateCount();
 });
@@ -834,6 +944,440 @@ saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = false;
     showNotice(err.message, true);
   }
+});
+
+
+// Translation glossary
+const glossaryLanguageFilter = document.getElementById("glossaryLanguageFilter");
+const glossarySubjectFilter = document.getElementById("glossarySubjectFilter");
+const glossarySearch = document.getElementById("glossarySearch");
+const glossarySearchBtn = document.getElementById("glossarySearchBtn");
+const glossaryBody = document.getElementById("glossaryBody");
+const glossaryEmpty = document.getElementById("glossaryEmpty");
+const glossaryPrev = document.getElementById("glossaryPrev");
+const glossaryNext = document.getElementById("glossaryNext");
+const glossaryPageLabel = document.getElementById("glossaryPageLabel");
+const glossaryForm = document.getElementById("glossaryForm");
+const glossaryEditId = document.getElementById("glossaryEditId");
+const glossaryFormTitle = document.getElementById("glossaryFormTitle");
+const glossarySource = document.getElementById("glossarySource");
+const glossaryTargetLanguage = document.getElementById("glossaryTargetLanguage");
+const glossaryTranslated = document.getElementById("glossaryTranslated");
+const glossarySubjectInput = document.getElementById("glossarySubject");
+const glossarySaveBtn = document.getElementById("glossarySaveBtn");
+const glossaryCancelBtn = document.getElementById("glossaryCancelBtn");
+const glossarySuggestBtn = document.getElementById("glossarySuggestBtn");
+const quickAddGlossaryBtn = document.getElementById("quickAddGlossaryBtn");
+const glossaryAutoGenerateBtn = document.getElementById("glossaryAutoGenerateBtn");
+const glossarySuggestStatus = document.getElementById("glossarySuggestStatus");
+const glossarySuggestions = document.getElementById("glossarySuggestions");
+const glossarySaveSelectedBtn = document.getElementById("glossarySaveSelectedBtn");
+
+let glossaryLoadedItems = [];
+
+let glossaryPage = 1;
+let glossaryTotalPages = 0;
+
+function syncGlossaryLanguages() {
+  const languages = [...language.options].map(option => ({
+    value: option.value,
+    label: option.textContent,
+  }));
+  const currentLanguage = language.value;
+  const currentGlossaryLanguage = glossaryTargetLanguage.value;
+
+  glossaryTargetLanguage.replaceChildren();
+  languages.forEach(({ value, label }) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    glossaryTargetLanguage.appendChild(option);
+  });
+
+  glossaryLanguageFilter.replaceChildren();
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "All languages";
+  glossaryLanguageFilter.appendChild(allOption);
+  languages.forEach(({ value, label }) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    glossaryLanguageFilter.appendChild(option);
+  });
+
+  glossaryTargetLanguage.value = languages.some(item => item.value === currentGlossaryLanguage)
+    ? currentGlossaryLanguage
+    : currentLanguage;
+  glossaryLanguageFilter.value = "";
+}
+
+async function glossaryRequest(url, options = {}) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = Array.isArray(data.detail)
+      ? data.detail.map(item => item && item.msg).filter(Boolean).join(", ")
+      : data.detail;
+    throw new Error(detail || "Glossary request failed.");
+  }
+  return data;
+}
+
+function setGlossaryError(message) {
+  const el = document.getElementById("glossaryError");
+  if (!el) return;
+  el.textContent = message;
+  el.classList.toggle("hidden", !message);
+}
+
+function languageLabel(value) {
+  const opt = [...language.options].find(o => o.value === value);
+  return opt ? opt.textContent : value;
+}
+
+function renderGlossaryRows(items) {
+  glossaryBody.replaceChildren();
+  glossaryEmpty.classList.toggle("hidden", items.length !== 0);
+  items.forEach(item => {
+    const tr = document.createElement("tr");
+    [item.source_term, languageLabel(item.target_language), item.translated_term, item.subject || "—"].forEach(value => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    const actions = document.createElement("td");
+    actions.className = "glossary-actions-cell";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "glossary-small-btn";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => startGlossaryEdit(item));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "glossary-small-btn danger-btn";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", () => deleteGlossary(item.id));
+    actions.append(edit, remove);
+    tr.appendChild(actions);
+    glossaryBody.appendChild(tr);
+  });
+}
+
+function filterGlossaryRows() {
+  const query = glossarySearch.value.trim().toLowerCase();
+  const filtered = !query ? glossaryLoadedItems : glossaryLoadedItems.filter(item =>
+    item.source_term.toLowerCase().includes(query) ||
+    item.translated_term.toLowerCase().includes(query)
+  );
+  renderGlossaryRows(filtered);
+}
+
+function loadGlossarySubjects(items) {
+  const current = glossarySubjectFilter.value;
+  glossarySubjectFilter.innerHTML = '<option value="">All subjects</option>';
+  const values = [...new Set(items.map(item => item.subject).filter(Boolean))].sort((a,b) => a.localeCompare(b));
+  values.forEach(value => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    glossarySubjectFilter.appendChild(option);
+  });
+  if (values.includes(current)) glossarySubjectFilter.value = current;
+}
+
+async function loadGlossary() {
+  setGlossaryError("");
+  try {
+    const params = new URLSearchParams({
+      language: glossaryLanguageFilter.value,
+      subject: glossarySubjectFilter.value
+    });
+    const data = await glossaryRequest("/api/glossary?" + params.toString());
+    const items = data.items || [];
+    glossaryLoadedItems = items;
+    filterGlossaryRows();
+    glossaryTotalPages = 1;
+    glossaryPageLabel.textContent = items.length ? "Page 1 of 1" : "No pages";
+    glossaryPrev.disabled = true;
+    glossaryNext.disabled = true;
+
+    const allData = await glossaryRequest("/api/glossary");
+    loadGlossarySubjects(allData.items || []);
+  } catch (err) {
+    setGlossaryError(err.message);
+  }
+}
+
+function resetGlossaryForm() {
+  glossaryEditId.value = "";
+  glossarySource.value = "";
+  glossaryTranslated.value = "";
+  glossarySubjectInput.value = "";
+  glossaryFormTitle.textContent = "Add term";
+  glossarySaveBtn.textContent = "Add term →";
+  glossaryTargetLanguage.value = language.value;
+  glossaryCancelBtn.classList.add("hidden");
+}
+
+function startGlossaryEdit(item) {
+  glossaryEditId.value = item.id;
+  glossarySource.value = item.source_term;
+  glossaryTargetLanguage.value = item.target_language;
+  glossaryTranslated.value = item.translated_term;
+  glossarySubjectInput.value = item.subject || "";
+  glossaryFormTitle.textContent = "Edit term";
+  glossarySaveBtn.textContent = "Save changes →";
+  glossaryCancelBtn.classList.remove("hidden");
+  glossarySource.focus();
+}
+
+async function deleteGlossary(id) {
+  if (!window.confirm("Delete this glossary term?")) return;
+  try {
+    await glossaryRequest("/api/glossary/" + id, { method: "DELETE" });
+    await loadGlossary();
+    showNotice("Glossary term deleted.");
+  } catch (err) {
+    setGlossaryError(err.message);
+  }
+}
+
+glossaryForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  setGlossaryError("");
+  const sourceTerm = glossarySource.value.trim();
+  const targetLanguage = glossaryTargetLanguage.value.trim();
+  const translatedTerm = glossaryTranslated.value.trim();
+  if (!sourceTerm || !translatedTerm || !targetLanguage) {
+    setGlossaryError("Source term, translated term, and target language are required.");
+    return;
+  }
+  glossarySaveBtn.disabled = true;
+  try {
+    const payload = {
+      source_term: sourceTerm,
+      target_language: targetLanguage,
+      translated_term: translatedTerm,
+      subject: glossarySubjectInput.value.trim(),
+    };
+    const id = glossaryEditId.value;
+    const data = id
+      ? await glossaryRequest("/api/glossary/" + id, { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) })
+      : await glossaryRequest("/api/glossary", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) });
+    resetGlossaryForm();
+    await loadGlossary();
+    showNotice(id ? "Glossary term updated." : "Glossary term added.");
+  } catch (err) {
+    setGlossaryError(err.message);
+  } finally {
+    glossarySaveBtn.disabled = false;
+  }
+});
+
+function setGlossarySuggestStatus(message, error = false) {
+  glossarySuggestStatus.textContent = message;
+  glossarySuggestStatus.classList.remove("hidden");
+  glossarySuggestStatus.classList.toggle("warning", error);
+}
+
+function updateGlossaryAutoGenerateState() {
+  if (!glossaryAutoGenerateBtn) return;
+  glossaryAutoGenerateBtn.disabled = !sourceText.value.trim() || !language.value;
+}
+
+function renderGlossarySuggestions(items) {
+  glossarySuggestions.replaceChildren();
+
+  if (!items.length) {
+    glossarySuggestions.classList.add("hidden");
+    glossarySaveSelectedBtn.classList.add("hidden");
+    setGlossarySuggestStatus("No new glossary terms were suggested for this language and subject.");
+    return;
+  }
+
+  items.forEach(item => {
+    const row = document.createElement("div");
+    row.className = "glossary-suggestion-row";
+    Object.assign(row.style, {
+      display: "grid",
+      gridTemplateColumns: "24px minmax(0, 1fr) 24px minmax(0, 1fr)",
+      gap: "8px",
+      alignItems: "center",
+      padding: "10px",
+      marginTop: "8px",
+      border: "1px solid rgba(255,255,255,.07)",
+      borderRadius: "12px",
+      background: "rgba(255,255,255,.025)"
+    });
+
+    const checkWrap = document.createElement("label");
+    checkWrap.style.display = "grid";
+    checkWrap.style.placeItems = "center";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.style.width = "16px";
+    checkbox.style.height = "16px";
+    checkbox.style.accentColor = "#7564ff";
+
+    checkWrap.appendChild(checkbox);
+
+    const source = document.createElement("input");
+    source.type = "text";
+    source.className = "glossary-edit-input";
+    source.value = item.source_term || "";
+    source.maxLength = 200;
+    source.placeholder = "Source term";
+
+    const arrow = document.createElement("span");
+    arrow.textContent = "→";
+    arrow.style.textAlign = "center";
+    arrow.style.color = "#7564ff";
+    arrow.style.fontWeight = "800";
+
+    const translated = document.createElement("input");
+    translated.type = "text";
+    translated.className = "glossary-edit-input";
+    translated.value = item.translated_term || "";
+    translated.maxLength = 200;
+    translated.placeholder = "Translated term";
+
+    row.append(checkWrap, source, arrow, translated);
+    glossarySuggestions.appendChild(row);
+  });
+
+  glossarySuggestions.classList.remove("hidden");
+  glossarySaveSelectedBtn.classList.remove("hidden");
+  setGlossarySuggestStatus(
+    items.length + " suggestion" + (items.length === 1 ? "" : "s") +
+    " found. Review the terms before saving."
+  );
+}
+
+glossaryAutoGenerateBtn.addEventListener("click", async () => {
+  const text = sourceText.value.trim();
+
+  if (!text) {
+    setGlossarySuggestStatus("Add curriculum text first.", true);
+    return;
+  }
+
+  if (text.length > 30000) {
+    setGlossarySuggestStatus("Keep the curriculum under 30,000 characters.", true);
+    return;
+  }
+
+  glossaryAutoGenerateBtn.disabled = true;
+  glossarySaveSelectedBtn.classList.add("hidden");
+  glossarySuggestions.classList.add("hidden");
+  setGlossarySuggestStatus("Gemini is finding technical and subject-specific terms...");
+
+  try {
+    const data = await glossaryRequest("/api/glossary/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        target_language: language.value,
+        subject: subject.value.trim(),
+      }),
+    });
+
+    renderGlossarySuggestions(data.suggestions || []);
+  } catch (err) {
+    setGlossarySuggestStatus(err.message, true);
+    glossarySuggestions.classList.add("hidden");
+    glossarySaveSelectedBtn.classList.add("hidden");
+  } finally {
+    updateGlossaryAutoGenerateState();
+  }
+});
+
+glossarySaveSelectedBtn.addEventListener("click", async () => {
+  const rows = [...glossarySuggestions.querySelectorAll(".glossary-suggestion-row")];
+  const selected = rows.map(row => ({
+    row,
+    checked: row.querySelector('input[type="checkbox"]')?.checked,
+    sourceTerm: row.querySelectorAll('input[type="text"]')[0]?.value.trim(),
+    translatedTerm: row.querySelectorAll('input[type="text"]')[1]?.value.trim(),
+  })).filter(item => item.checked && item.sourceTerm && item.translatedTerm);
+
+  if (!selected.length) {
+    setGlossarySuggestStatus("Select at least one complete glossary term.", true);
+    return;
+  }
+
+  glossarySaveSelectedBtn.disabled = true;
+  setGlossarySuggestStatus("Saving selected glossary terms...");
+
+  let saved = 0;
+  let duplicates = 0;
+  let failed = 0;
+
+  for (const item of selected) {
+    try {
+      await glossaryRequest("/api/glossary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_term: item.sourceTerm,
+          target_language: glossaryTargetLanguage.value,
+          translated_term: item.translatedTerm,
+          subject: glossarySubjectInput.value.trim(),
+        }),
+      });
+      saved += 1;
+      const checkbox = item.row.querySelector('input[type="checkbox"]');
+      if (checkbox) checkbox.checked = false;
+    } catch (err) {
+      if (/already exists/i.test(err.message) || /409/.test(err.message)) {
+        duplicates += 1;
+        const checkbox = item.row.querySelector('input[type="checkbox"]');
+        if (checkbox) checkbox.checked = false;
+      } else {
+        failed += 1;
+      }
+    }
+  }
+
+  glossarySaveSelectedBtn.disabled = false;
+  await loadGlossary();
+
+  const parts = [];
+  if (saved) parts.push(saved + " saved");
+  if (duplicates) parts.push(duplicates + " duplicate" + (duplicates === 1 ? "" : "s") + " skipped");
+  if (failed) parts.push(failed + " failed");
+
+  setGlossarySuggestStatus(
+    parts.length ? parts.join(" • ") : "Nothing was saved.",
+    failed > 0
+  );
+});
+language.addEventListener("change", () => {
+  if (!glossaryEditId.value) glossaryTargetLanguage.value = language.value;
+  updateGlossaryAutoGenerateState();
+});
+glossaryCancelBtn.addEventListener("click", resetGlossaryForm);
+glossarySearchBtn.addEventListener("click", filterGlossaryRows);
+glossarySearch.addEventListener("input", filterGlossaryRows);
+glossarySearch.addEventListener("keydown", event => { if (event.key === "Enter") filterGlossaryRows(); });
+[glossaryLanguageFilter, glossarySubjectFilter].forEach(select => select.addEventListener("change", loadGlossary));
+
+quickAddGlossaryBtn.addEventListener("click", async () => {
+  const selectedText = sourceText.value.slice(sourceText.selectionStart, sourceText.selectionEnd).trim();
+  if (!selectedText) {
+    showNotice("Select text in the curriculum input first.", true);
+    return;
+  }
+  syncGlossaryLanguages();
+  resetGlossaryForm();
+  glossarySource.value = selectedText;
+  glossaryTargetLanguage.value = language.value;
+  glossarySubjectInput.value = subject.value.trim();
+  showTab("glossaryView");
+  glossarySource.focus();
 });
 
 // Admin login
@@ -903,4 +1447,6 @@ logoutBtn.addEventListener("click", () => {
   setDashboardError("");
 });
 
+syncGlossaryLanguages();
+updateGlossaryAutoGenerateState();
 showTab("translateView");
